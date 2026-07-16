@@ -1,0 +1,27 @@
+{
+    "name": "elisia-starter-template",
+    "version": "1.0.50",
+    "scripts": {
+        "test": "bun test",
+        "dev": "bun run --watch src/index.ts",
+        "format": "prettier --write 'src/**/*.{ts,js,json,md}'"
+    },
+    "dependencies": {
+        "@bogeychan/elysia-logger": "^0.1.10",
+        "@elysia/opentelemetry": "^1.4.12",
+        "@elysiajs/cors": "^1.4.2",
+        "@elysiajs/openapi": "^1.4.15",
+        "@elysiajs/server-timing": "^1.4.1",
+        "@elysiajs/static": "^1.4.10",
+        "@valibot/to-json-schema": "^1.7.1",
+        "elysia": "latest",
+        "elysia-rate-limit": "^4.6.2",
+        "valibot": "^1.4.1",
+        "valibot-env": "^1.0.0"
+    },
+    "devDependencies": {
+        "bun-types": "latest",
+        "@trivago/prettier-plugin-sort-imports": "^6.0.2"
+    },
+    "module": "src/index.js"
+}

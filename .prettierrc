@@ -1,0 +1,30 @@
+{
+    "printWidth": 115,
+    "tabWidth": 4,
+    "semi": false,
+    "trailingComma": "none",
+    "singleQuote": true,
+    "bracketSpacing": true,
+    "arrowParens": "always",
+    "jsxSingleQuote": false,
+    "bracketSameLine": false,
+    "endOfLine": "crlf",
+    "importOrder": [
+        "^elysia$",
+        "^@elysia/(.*)$",
+        "^@elysiajs/(.*)$",
+        "@opentelemetry(.*)$",
+        "^@(.*)$",
+        "^@/(.*)$",
+        "<THIRD_PARTY_MODULES>",
+        "node:(.*)$",
+        "^./plugins(.*)$",
+        "^./router(.*)$",
+        "^./config(.*)$",
+        "^[./]"
+    ],
+    "importOrderSeparation": true,
+    "importOrderSortSpecifiers": true,
+    "importOrderGroupNamespaceSpecifiers": true,
+    "plugins": ["@trivago/prettier-plugin-sort-imports"]
+}
