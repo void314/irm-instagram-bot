@@ -1,5 +1,5 @@
 {
-    "name": "elisia-starter-template",
+    "name": "irm-instagram-bot",
     "version": "1.0.50",
     "scripts": {
         "test": "bun test",
@@ -14,9 +14,10 @@
         "@elysiajs/server-timing": "^1.4.1",
         "@elysiajs/static": "^1.4.10",
         "@valibot/to-json-schema": "^1.7.1",
-        "elysia": "latest",
+        "elysia": "1.4.29",
         "elysia-rate-limit": "^4.6.2",
-        "valibot": "^1.4.1",
+        "facebook-nodejs-business-sdk": "^24.0.1",
+        "valibot": "^1.4.2",
         "valibot-env": "^1.0.0"
     },
     "devDependencies": {
@@ -25,3 +26,4 @@
     },
     "module": "src/index.js"
 }
+
