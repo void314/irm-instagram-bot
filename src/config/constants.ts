@@ -13,7 +13,13 @@ const env = createEnv({
         private: {
             PORT: v.optional(v.number(), 3032),
             RATE_LIMIT_MAX_REQUESTS: v.optional(v.number(), 100),
-            RATE_LIMIT_WINDOW: v.optional(v.number(), 60 * 1000)
+            RATE_LIMIT_WINDOW: v.optional(v.number(), 60 * 1000),
+            FACEBOOK_APP_ID: v.optional(v.string()),
+            FACEBOOK_APP_SECRET: v.optional(v.string()),
+            FACEBOOK_PAGE_ID: v.optional(v.string()),
+            FACEBOOK_PAGE_ACCESS_TOKEN: v.optional(v.string()),
+            INSTAGRAM_BUSINESS_ID: v.optional(v.string()),
+            FACEBOOK_GRAPH_API_VERSION: v.optional(v.string(), 'v25.0')
         },
         shared: {
             NODE_ENV: v.optional(
