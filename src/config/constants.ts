@@ -12,6 +12,7 @@ const env = createEnv({
         },
         private: {
             PORT: v.optional(v.number(), 3032),
+            DATABASE_URL: v.optional(v.string()),
             RATE_LIMIT_MAX_REQUESTS: v.optional(v.number(), 100),
             RATE_LIMIT_WINDOW: v.optional(v.number(), 60 * 1000),
             FACEBOOK_APP_ID: v.optional(v.string()),

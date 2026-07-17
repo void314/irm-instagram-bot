@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: irm-insta-pg
+    restart: unless-stopped
+    ports:
+      - "5437:5432"
+    environment:
+      POSTGRES_DB: irm-insta-ai
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "$$2a$$10$$nDFYhaaXa19GRoShnoLnSu8UrtPH7idhQFQqprBOuocF.m6xwZE66"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  pgdata:

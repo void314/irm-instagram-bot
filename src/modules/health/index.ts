@@ -1,6 +1,6 @@
 import Elysia, { status } from 'elysia'
 
-import { healthResponse200, healthResponse400 } from './model'
+import { healthResponse200, healthResponse500 } from './model'
 import { HealthService } from './service'
 
 const healthService = new HealthService()
@@ -11,11 +11,11 @@ export const healthController = new Elysia({
     detail: { tags: ['Health'] }
 }).get(
     '/',
-    () => {
-        const result = healthService.check()
+    async () => {
+        const result = await healthService.check()
 
         if (result.status === 'error') {
-            return status(400, result)
+            return status(500, result)
         }
 
         return result
@@ -23,7 +23,7 @@ export const healthController = new Elysia({
     {
         response: {
             200: healthResponse200,
-            400: healthResponse400
+            500: healthResponse500
         },
         detail: {
             summary: 'Health Check API',

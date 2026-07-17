@@ -10,7 +10,7 @@ describe('Health Module', () => {
         const body = await response.json()
 
         expect(response.status).toBe(200)
-        expect(body).toEqual({ status: 'online' })
+        expect(body).toEqual({ status: 'online', message: 'Database is healthy', data: { ok: 1 } })
     })
 
     // Пример теста на 404
@@ -19,4 +19,3 @@ describe('Health Module', () => {
         expect(response.status).toBe(404)
     })
 })
-

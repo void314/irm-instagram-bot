@@ -1,18 +1,25 @@
-import type { HealthResponse200, HealthResponse400 } from './model'
+import { sql } from 'drizzle-orm'
+
+import { db } from '../../db/client'
+import type { HealthResponse200, HealthResponse500 } from './model'
 
 export class HealthService {
-    public check(): HealthResponse200 | HealthResponse400 {
-        const isHealthy = true // TODO: Добавить реальную проверку БД/Кэша
+    public async check(): Promise<HealthResponse200 | HealthResponse500> {
+        try {
+            const isHealthy = await db.execute(sql`SELECT 1 AS ok`)
 
-        if (!isHealthy) {
+            if (!isHealthy) {
+                return {
+                    status: 'error',
+                    message: 'Database is not healthy'
+                }
+            }
+            return { status: 'online', message: 'Database is healthy', data: isHealthy[0] as { ok: 1 } }
+        } catch (error) {
             return {
                 status: 'error',
-                message: 'Service is not healthy'
+                message: (error as Error).message
             }
-        }
-
-        return {
-            status: 'online'
         }
     }
 }
