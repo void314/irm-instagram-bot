@@ -1,6 +1,7 @@
 import Elysia, { status } from 'elysia'
 
 import { env } from '../../../config/constants'
+import { TokenService } from '../../tokens'
 import {
     facebookCallbackQuery,
     facebookLoginQuery,
@@ -13,6 +14,7 @@ import {
 import { FacebookAuthService } from './service'
 
 const facebookAuthService = new FacebookAuthService()
+const tokenService = new TokenService()
 
 export const authController = new Elysia({
     name: 'module.auth.facebook',
@@ -44,6 +46,15 @@ export const authController = new Elysia({
 
             if ('error' in result) {
                 return status(400, result)
+            }
+
+            if (result.igBusinessAccount) {
+                await tokenService.saveToken(
+                    result.igBusinessAccount.igId,
+                    result.igBusinessAccount.username ?? null,
+                    result.pageAccessToken,
+                    null
+                )
             }
 
             return result

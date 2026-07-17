@@ -1,4 +1,11 @@
+import { eq } from 'drizzle-orm'
+
 import { env } from '../../../config/constants'
+import { db } from '../../../db/client'
+import { accounts, conversations, messages } from '../../../db/schema'
+import { log } from '../../../services/logger'
+import { runPipeline } from '../../../services/rag/orchestrator'
+import { TokenService } from '../../tokens'
 import type {
     InstagramWebhookPayload,
     SubscribeErrorResponse400,
@@ -34,20 +41,30 @@ const SUBSCRIBE_PERMISSION_HINT = [
     'Get a fresh token via POST /api/auth/facebook/token-from-user'
 ].join(' ')
 
+const tokenService = new TokenService()
+
 export class InstagramMessagingService {
     public async sendTextMessage(recipientId: string, text: string): Promise<SendMessageResult> {
-        if (!env.FACEBOOK_PAGE_ID) {
-            return { status: 'error', message: 'Missing FACEBOOK_PAGE_ID' }
+        let pageToken: string | null = null
+
+        if (env.INSTAGRAM_BUSINESS_ID) {
+            pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
         }
 
-        if (!env.FACEBOOK_PAGE_ACCESS_TOKEN) {
-            return { status: 'error', message: 'Missing FACEBOOK_PAGE_ACCESS_TOKEN' }
+        pageToken ??= env.FACEBOOK_PAGE_ACCESS_TOKEN || ''
+
+        if (!pageToken) {
+            return { status: 'error', message: 'No page access token available' }
+        }
+
+        if (!env.FACEBOOK_PAGE_ID) {
+            return { status: 'error', message: 'Missing FACEBOOK_PAGE_ID' }
         }
 
         const url = new URL(
             `https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION}/${env.FACEBOOK_PAGE_ID}/messages`
         )
-        url.searchParams.set('access_token', env.FACEBOOK_PAGE_ACCESS_TOKEN)
+        url.searchParams.set('access_token', pageToken)
 
         const response = await fetch(url, {
             method: 'POST',
@@ -84,14 +101,22 @@ export class InstagramWebhookService {
     constructor(private readonly instagramMessagingService = new InstagramMessagingService()) {}
 
     public async subscribePage(): Promise<SubscribeResponse200 | SubscribeErrorResponse400> {
-        if (!env.FACEBOOK_PAGE_ID || !env.FACEBOOK_PAGE_ACCESS_TOKEN) {
-            return { error: 'FACEBOOK_PAGE_ID or FACEBOOK_PAGE_ACCESS_TOKEN not configured' }
+        let pageToken: string | null = null
+
+        if (env.INSTAGRAM_BUSINESS_ID) {
+            pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
+        }
+
+        pageToken ??= env.FACEBOOK_PAGE_ACCESS_TOKEN || ''
+
+        if (!env.FACEBOOK_PAGE_ID || !pageToken) {
+            return { error: 'FACEBOOK_PAGE_ID or page access token not configured' }
         }
 
         const base = `https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION || 'v25.0'}`
         const url = new URL(`${base}/${env.FACEBOOK_PAGE_ID}/subscribed_apps`)
         url.searchParams.set('subscribed_fields', 'messages')
-        url.searchParams.set('access_token', env.FACEBOOK_PAGE_ACCESS_TOKEN)
+        url.searchParams.set('access_token', pageToken)
 
         const response = await fetch(url, { method: 'POST' })
         const data = await response.json()
@@ -134,6 +159,11 @@ export class InstagramWebhookService {
     public async processPayload(payload: InstagramWebhookPayload): Promise<WebhookEventResponse200> {
         const entries = payload.entry || []
 
+        log.info(
+            { module: 'webhook', object: payload.object, entryCount: entries.length },
+            '[webhook] payload received'
+        )
+
         for (const entry of entries) {
             await this.processEntry(entry)
         }
@@ -144,6 +174,16 @@ export class InstagramWebhookService {
     private async processEntry(entry: NonNullable<InstagramWebhookPayload['entry']>[number]) {
         const messagingEvents = entry.messaging || []
         const changeEvents = entry.changes || []
+
+        log.info(
+            {
+                module: 'webhook',
+                entryId: entry.id,
+                messagingCount: messagingEvents.length,
+                changeCount: changeEvents.length
+            },
+            '[webhook] entry'
+        )
 
         for (const event of messagingEvents) {
             await this.processMessagingEvent(entry.id, event)
@@ -162,6 +202,7 @@ export class InstagramWebhookService {
         const recipientId = event.recipient?.id
         const message = event.message
         const isEcho = message?.is_echo
+        const text = message?.text
 
         if (!senderId || !message || isEcho) {
             return
@@ -176,7 +217,8 @@ export class InstagramWebhookService {
             (recipientId === env.INSTAGRAM_BUSINESS_ID || entryId === env.INSTAGRAM_BUSINESS_ID)
 
         if (isBusinessRecipient) {
-            await this.replyWithAutoResponse(senderId)
+            log.info({ module: 'webhook', senderId, recipientId }, '[webhook] messaging event handled')
+            await this.handleIncomingMessage(senderId, text ?? null)
         }
     }
 
@@ -190,6 +232,7 @@ export class InstagramWebhookService {
         const senderId = change.value?.from?.id
         const recipientId = change.value?.to?.id
         const isEcho = change.value?.is_echo
+        const text = change.value?.message?.text
 
         if (!senderId || isEcho) {
             return
@@ -200,21 +243,105 @@ export class InstagramWebhookService {
         }
 
         if (recipientId && env.INSTAGRAM_BUSINESS_ID && recipientId === env.INSTAGRAM_BUSINESS_ID) {
-            await this.replyWithAutoResponse(senderId)
+            log.info({ module: 'webhook', senderId, recipientId }, '[webhook] change event handled')
+            await this.handleIncomingMessage(senderId, text ?? null)
         }
     }
 
-    private async replyWithAutoResponse(recipientId: string) {
-        const result = await this.instagramMessagingService.sendTextMessage(
-            recipientId,
-            env.WEBHOOK_AUTO_REPLY_TEXT
+    private async handleIncomingMessage(senderId: string, text: string | null) {
+        log.info(
+            { module: 'webhook', senderId, hasText: !!text, textLength: text?.length ?? 0 },
+            '[webhook] incoming message'
         )
 
-        if (result.status === 'error') {
-            console.error('[Webhook] Instagram reply failed:', result.message)
+        let conv = await db
+            .select()
+            .from(conversations)
+            .where(eq(conversations.senderId, senderId))
+            .then((rows) => rows[0])
+
+        if (!conv && env.INSTAGRAM_BUSINESS_ID) {
+            const [newConv] = await db
+                .insert(conversations)
+                .values({
+                    senderId,
+                    businessId: env.INSTAGRAM_BUSINESS_ID
+                })
+                .returning()
+            conv = newConv
+
+            log.info({ module: 'webhook', conversationId: conv.id.toString() }, '[webhook] conversation created')
+        }
+
+        if (!conv) {
+            console.error('[Webhook] Cannot create conversation — missing INSTAGRAM_BUSINESS_ID')
             return
         }
 
-        console.log('[Webhook] Instagram reply sent:', result.message_id || result.recipient_id)
+        if (env.INSTAGRAM_BUSINESS_ID && text) {
+            await db.insert(messages).values({
+                conversationId: conv.id,
+                fromId: senderId,
+                text
+            })
+
+            log.info({ module: 'webhook', conversationId: conv.id.toString() }, '[webhook] message stored')
+        }
+
+        const question = text || env.WEBHOOK_AUTO_REPLY_TEXT
+
+        try {
+            const { answer, intent, needsClarification } = await runPipeline(question, {
+                conversationId: conv.id
+            })
+
+            log.info(
+                {
+                    module: 'webhook',
+                    conversationId: conv.id.toString(),
+                    intent,
+                    needsClarification,
+                    answerLength: answer.length
+                },
+                '[webhook] pipeline result'
+            )
+
+            if (intent !== 'clear_context') {
+                const result = await this.instagramMessagingService.sendTextMessage(senderId, answer)
+
+                if (env.INSTAGRAM_BUSINESS_ID && answer) {
+                    await db.insert(messages).values({
+                        conversationId: conv.id,
+                        fromId: env.INSTAGRAM_BUSINESS_ID,
+                        text: answer
+                    })
+                }
+
+                if (conv.messageCount !== null && conv.messageCount % 6 === 0 && conv.messageCount > 0) {
+                    const { updateConversationSummary } = await import('../../../services/rag/context')
+                    await updateConversationSummary(conv.id)
+                }
+
+                if (result.status === 'error') {
+                    log.error({ module: 'webhook', error: result.message }, '[webhook] reply failed')
+                    return
+                }
+
+                log.info(
+                    { module: 'webhook', messageId: result.message_id || result.recipient_id, intent },
+                    '[webhook] reply sent'
+                )
+            }
+        } catch (err) {
+            log.error({ module: 'webhook', error: String(err) }, '[webhook] pipeline error')
+
+            const fallback = await this.instagramMessagingService.sendTextMessage(
+                senderId,
+                env.WEBHOOK_AUTO_REPLY_TEXT
+            )
+            if (fallback.status === 'error') {
+                console.error('[Webhook] Fallback reply failed:', fallback.message)
+            }
+        }
     }
 }

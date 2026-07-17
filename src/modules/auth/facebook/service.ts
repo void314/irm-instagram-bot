@@ -42,6 +42,11 @@ type FacebookPermission = {
     status: string
 }
 
+type IgBusinessAccount = {
+    id: string
+    username?: string
+}
+
 export class FacebookAuthService {
     public getCallbackUrl(redirectUri?: string) {
         return redirectUri || `http://localhost:${env.PORT}/api/auth/facebook/callback`
@@ -56,6 +61,29 @@ export class FacebookAuthService {
         fbUrl.searchParams.set('response_type', 'code')
 
         return fbUrl.toString()
+    }
+
+    private async fetchIgBusinessAccount(
+        pageId: string,
+        pageAccessToken: string
+    ): Promise<{ igId: string; username?: string } | null> {
+        const res = await this.graphApiGet(
+        `/${pageId}?fields=instagram_business_account{id,username}`,
+            pageAccessToken
+        )
+
+        if (!res.ok) return null
+
+        const data = res.data as {
+            instagram_business_account?: IgBusinessAccount
+        }
+
+        if (!data.instagram_business_account) return null
+
+        return {
+            igId: data.instagram_business_account.id,
+            username: data.instagram_business_account.username
+        }
     }
 
     public async exchangeUserToken(
@@ -90,10 +118,16 @@ export class FacebookAuthService {
 
             if (directRes.ok && (directRes.data as { access_token?: string })?.access_token) {
                 const page = directRes.data as FacebookPage
+                const ig = await this.fetchIgBusinessAccount(page.id, page.access_token)
+
                 const result: TokenFromUserResponse200 = {
                     page: { id: page.id, name: page.name },
                     pageAccessToken: page.access_token,
                     note: 'Token obtained via direct page access (Business Portfolio)'
+                }
+
+                if (ig) {
+                    result.igBusinessAccount = { igId: ig.igId, username: ig.username }
                 }
 
                 if (!hasPagesMessaging) {
@@ -126,10 +160,16 @@ export class FacebookAuthService {
             }
         }
 
+        const ig = await this.fetchIgBusinessAccount(matchedPage.id, matchedPage.access_token)
+
         const result: TokenFromUserResponse200 = {
             user: meRes.data,
             page: { id: matchedPage.id, name: matchedPage.name },
             pageAccessToken: matchedPage.access_token
+        }
+
+        if (ig) {
+            result.igBusinessAccount = { igId: ig.igId, username: ig.username }
         }
 
         if (!hasPagesMessaging) {

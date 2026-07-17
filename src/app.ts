@@ -21,10 +21,13 @@ import router from './router'
 
 import { env } from './config/constants'
 
+import { tokenCronController } from './modules/tokens'
+import { loggerPlugin } from './services/logger'
+
 const app = new Elysia({ name: 'app.root' })
     // * Global Error Handler
     .use(globalErrorHandler)
-    .use(logger({ level: env.NODE_ENV === 'development' ? 'info' : 'error' }))
+    .use(loggerPlugin)
     // * OpenAPI Documentation
     .use(
         openapi({
@@ -86,6 +89,8 @@ const app = new Elysia({ name: 'app.root' })
     )
     // * Mount Router
     .use(router)
+    // * Token Cron
+    .use(tokenCronController)
 
 export type App = typeof app
 export default app

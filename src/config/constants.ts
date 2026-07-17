@@ -22,7 +22,13 @@ const env = createEnv({
             INSTAGRAM_BUSINESS_ID: v.optional(v.string()),
             FACEBOOK_GRAPH_API_VERSION: v.optional(v.string(), 'v25.0'),
             WEBHOOK_VERIFY_TOKEN: v.optional(v.string()),
-            WEBHOOK_AUTO_REPLY_TEXT: v.optional(v.string(), 'Thanks for your message! We will reply soon.')
+            WEBHOOK_AUTO_REPLY_TEXT: v.optional(v.string(), 'Thanks for your message! We will reply soon.'),
+            TOKEN_ENCRYPTION_KEY: v.optional(v.string()),
+            OPENROUTER_BASE_URL: v.optional(v.string(), 'https://openrouter.ai/api/v1'),
+            OPENROUTER_API_KEY: v.optional(v.string()),
+            LLM_MODEL: v.optional(v.string(), 'openai/gpt-4o-mini'),
+            EMBED_MODEL: v.optional(v.string(), 'google/gemini-embedding-2'),
+            RAG_TOP_K: v.optional(v.number(), 5)
         },
         shared: {
             NODE_ENV: v.optional(

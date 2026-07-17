@@ -21,6 +21,12 @@ export const tokenFromUserResponse200 = v.object({
         name: v.string()
     }),
     pageAccessToken: v.string(),
+    igBusinessAccount: v.optional(
+        v.object({
+            igId: v.string(),
+            username: v.optional(v.string())
+        })
+    ),
     note: v.optional(v.string()),
     warning: v.optional(v.string())
 })

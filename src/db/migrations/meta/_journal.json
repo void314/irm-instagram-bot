@@ -8,6 +8,20 @@
             "when": 1784265829453,
             "tag": "0000_bent_morlun",
             "breakpoints": true
+        },
+        {
+            "idx": 1,
+            "version": "7",
+            "when": 1784352000000,
+            "tag": "0001_bent_morlun",
+            "breakpoints": true
+        },
+        {
+            "idx": 2,
+            "version": "7",
+            "when": 1784438400000,
+            "tag": "0002_bent_morlun",
+            "breakpoints": true
         }
     ]
 }
