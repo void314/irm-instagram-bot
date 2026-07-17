@@ -1,6 +1,7 @@
 import { chat } from '../llm/openrouter'
 import { log } from '../logger'
 import { detectFastIntent } from './intent'
+import { detectLanguage } from './language'
 import { hybridSearch } from './hybrid'
 import { checkGrounding } from './grounding'
 import { getConversationContext, incrementMessageCount } from './context'
@@ -51,7 +52,10 @@ export async function runPipeline(
         groundingPassed: true
     }
 
-    const fastIntent = detectFastIntent(query)
+    const detectedLang = detectLanguage(query)
+    ragLog('language detected', { language: detectedLang })
+
+    const fastIntent = detectFastIntent(query, detectedLang)
     debug.intentType = fastIntent?.type ?? 'query'
     ragLog('intent detected', { intent: debug.intentType, question: query.slice(0, 60) })
 
