@@ -19,7 +19,9 @@ const env = createEnv({
             FACEBOOK_PAGE_ID: v.optional(v.string()),
             FACEBOOK_PAGE_ACCESS_TOKEN: v.optional(v.string()),
             INSTAGRAM_BUSINESS_ID: v.optional(v.string()),
-            FACEBOOK_GRAPH_API_VERSION: v.optional(v.string(), 'v25.0')
+            FACEBOOK_GRAPH_API_VERSION: v.optional(v.string(), 'v25.0'),
+            WEBHOOK_VERIFY_TOKEN: v.optional(v.string()),
+            WEBHOOK_AUTO_REPLY_TEXT: v.optional(v.string(), 'Thanks for your message! We will reply soon.')
         },
         shared: {
             NODE_ENV: v.optional(
