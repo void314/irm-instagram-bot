@@ -21,7 +21,7 @@ import router from './router'
 
 import { env } from './config/constants'
 
-const app = new Elysia()
+const app = new Elysia({ name: 'app.root' })
     // * Global Error Handler
     .use(globalErrorHandler)
     .use(logger({ level: env.NODE_ENV === 'development' ? 'info' : 'error' }))

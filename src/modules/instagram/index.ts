@@ -1,18 +1,21 @@
-import Elysia from 'elysia'
+import Elysia, { status } from 'elysia'
 
 import { instagramProfileResponse200, instagramProfileResponse400 } from './model'
 import { InstagramService } from './service'
 
 const instagramService = new InstagramService()
 
-export const instagramController = new Elysia({ prefix: '/instagram', detail: { tags: ['Instagram'] } }).get(
+export const instagramController = new Elysia({
+    name: 'module.instagram',
+    prefix: '/instagram',
+    detail: { tags: ['Instagram'] }
+}).get(
     '/me',
-    async ({ set }) => {
+    async () => {
         const result = await instagramService.getProfile()
 
         if (result.status === 'error') {
-            set.status = 400
-            return result
+            return status(400, result)
         }
 
         return result

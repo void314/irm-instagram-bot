@@ -6,6 +6,7 @@ import { instagramController } from './modules/instagram'
 import { instagramWebhookController } from './modules/webhook/instagram'
 
 const router = new Elysia({
+    name: 'router.api',
     prefix: '/api'
 })
     .use(authController)
