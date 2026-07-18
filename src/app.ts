@@ -10,7 +10,6 @@ import staticPlugin from '@elysiajs/static'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
 import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node'
 
-import { logger } from '@bogeychan/elysia-logger'
 import { toJsonSchema } from '@valibot/to-json-schema'
 
 import { rateLimit } from 'elysia-rate-limit'
@@ -21,12 +20,10 @@ import router from './router'
 
 import { env } from './config/constants'
 
+import { initLearningWorkers } from './agents/learning/scheduler'
 import { servicesCronController } from './modules/services'
 import { tokenCronController } from './modules/tokens'
 import { loggerPlugin } from './services/logger'
-import { initLearningWorkers } from './agents/learning/scheduler'
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 
 ;(BigInt.prototype as any).toJSON = function () {
     return this.toString()

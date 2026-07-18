@@ -112,7 +112,9 @@ export const accounts = pgTable('accounts', {
 export const responseFeedback = pgTable('response_feedback', {
     id: bigint({ mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
     responseId: text('response_id'),
-    conversationId: bigint('conversation_id', { mode: 'bigint' }).references(() => conversations.id, { onDelete: 'cascade' }),
+    conversationId: bigint('conversation_id', { mode: 'bigint' }).references(() => conversations.id, {
+        onDelete: 'cascade'
+    }),
     sessionId: text('session_id'),
     query: text('query').notNull(),
     originalResponse: text('original_response').notNull(),

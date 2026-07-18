@@ -1,9 +1,10 @@
-import { count, desc, eq, like, sql } from 'drizzle-orm'
 import Elysia, { status, t } from 'elysia'
 
+import { count, desc, eq, like, sql } from 'drizzle-orm'
+
+import { correctionsQueue } from '../../agents/learning/scheduler'
 import { db } from '../../db/client'
 import { conversations, messages, patients, responseFeedback, services } from '../../db/schema'
-import { correctionsQueue } from '../../agents/learning/scheduler'
 
 export const feedbackController = new Elysia({
     name: 'module.admin.feedback',
@@ -18,7 +19,7 @@ feedbackController.get(
             .select()
             .from(responseFeedback)
             .where(statusFilter ? eq(responseFeedback.status, statusFilter) : sql`TRUE`)
-            
+
         const rows = await query
             .orderBy(desc(responseFeedback.createdAt))
             .limit(limit ?? 50)
@@ -50,18 +51,23 @@ feedbackController.post(
     '/:id/correct',
     async ({ params: { id }, body }) => {
         const feedbackId = BigInt(id)
-        
+
         // Ensure feedback exists, if not, we can create one if we have responseId, but let's assume it exists or we throw
         // Actually, if we're correcting an inline message from UI that wasn't feedbacked yet, we might need to create it.
         // The plan says "исправить ответ -> сохраняется в response_feedback"
-        
-        let feedback = await db.select().from(responseFeedback).where(eq(responseFeedback.id, feedbackId)).then(r => r[0])
-        
+
+        let feedback = await db
+            .select()
+            .from(responseFeedback)
+            .where(eq(responseFeedback.id, feedbackId))
+            .then((r) => r[0])
+
         if (!feedback) {
             return status(404, { error: 'Feedback not found' })
         }
-        
-        await db.update(responseFeedback)
+
+        await db
+            .update(responseFeedback)
             .set({
                 correctedResponse: body.correctedResponse,
                 correctionReason: body.correctionReason,
@@ -69,9 +75,9 @@ feedbackController.post(
                 source: 'admin'
             })
             .where(eq(responseFeedback.id, feedbackId))
-            
+
         await correctionsQueue.add('process', { feedbackId: id })
-            
+
         return { success: true }
     },
     {
@@ -90,19 +96,22 @@ feedbackController.post(
 feedbackController.post(
     '/create',
     async ({ body }) => {
-        const inserted = await db.insert(responseFeedback).values({
-            responseId: body.responseId,
-            conversationId: BigInt(body.conversationId),
-            query: body.query,
-            originalResponse: body.originalResponse,
-            correctedResponse: body.correctedResponse,
-            correctionReason: body.correctionReason,
-            status: 'pending',
-            source: 'admin'
-        }).returning()
-        
+        const inserted = await db
+            .insert(responseFeedback)
+            .values({
+                responseId: body.responseId,
+                conversationId: BigInt(body.conversationId),
+                query: body.query,
+                originalResponse: body.originalResponse,
+                correctedResponse: body.correctedResponse,
+                correctionReason: body.correctionReason,
+                status: 'pending',
+                source: 'admin'
+            })
+            .returning()
+
         await correctionsQueue.add('process', { feedbackId: inserted[0].id.toString() })
-        
+
         return inserted[0]
     },
     {

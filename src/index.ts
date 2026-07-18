@@ -1,7 +1,7 @@
 import { env } from './config/constants'
-import { shutdownQueues } from './lib/queue'
 
 import app from './app'
+import { shutdownQueues } from './lib/queue'
 
 app.onStart(() => {
     console.log(`-`.repeat(50))

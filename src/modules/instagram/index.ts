@@ -1,19 +1,18 @@
-import Elysia, { status } from 'elysia'
+import Elysia from 'elysia'
 
 import * as models from './model'
 import { InstagramService } from './service'
-
-const instagramService = new InstagramService()
 
 export const instagramController = new Elysia({
     name: 'module.instagram',
     prefix: '/instagram',
     detail: { tags: ['Instagram'] }
 })
+    .decorate('instagramService', new InstagramService())
     .model(models)
     .get(
         '/me',
-        async () => {
+        async ({ instagramService }) => {
             return await instagramService.getProfile()
         },
         {

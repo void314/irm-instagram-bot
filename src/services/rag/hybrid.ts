@@ -1,9 +1,8 @@
 import { sql } from 'drizzle-orm'
 
 import { env } from '../../config/constants'
-import { db } from '../../db/client'
-
 import { isLearningEnabled } from '../../config/learning'
+import { db } from '../../db/client'
 
 export interface HybridSearchResult {
     chunkId: bigint
@@ -64,16 +63,17 @@ export async function hybridSearch(query: string, embedding?: number[]): Promise
     )
 
     // Learning Store search (weight 0.5)
-    const learnResults = isLearningEnabled ? await db.execute<{
-        id: string
-        document_id: string
-        text: string
-        vector_score: string
-        bm25_score: string
-        score: string
-        metadata: string
-    }>(
-        sql`
+    const learnResults = isLearningEnabled
+        ? await db.execute<{
+              id: string
+              document_id: string
+              text: string
+              vector_score: string
+              bm25_score: string
+              score: string
+              metadata: string
+          }>(
+              sql`
             WITH scored AS (
                 SELECT
                     c.id,
@@ -98,7 +98,8 @@ export async function hybridSearch(query: string, embedding?: number[]): Promise
             ORDER BY score DESC
             LIMIT ${topK}
         `
-    ) : []
+          )
+        : []
 
     const allResults = [...ragResults, ...learnResults].map((r) => ({
         chunkId: BigInt(r.id),

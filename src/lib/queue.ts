@@ -1,5 +1,6 @@
-import { Queue, Worker, type Job, type Processor } from 'bullmq'
+import { type Job, type Processor, Queue, Worker } from 'bullmq'
 import Redis from 'ioredis'
+
 import { env } from '../config/constants'
 
 // Redis connection shared among queues and workers

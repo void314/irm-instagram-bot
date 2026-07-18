@@ -1,6 +1,8 @@
+import { handleBookingIntent, isBookingIntent } from '../../agents/booking/service'
 import { env } from '../../config/constants'
+import { isLearningEnabled } from '../../config/learning'
 import { findBranchByNameOrCity, getBranchesList } from '../../constants/branches'
-import { type ChatMessage, type ToolCall, type ToolDefinition, chat } from '../llm/openrouter'
+import { type ChatMessage, type ToolCall, chat } from '../llm/openrouter'
 import { generateEmbedding } from '../llm/openrouter'
 import { log } from '../logger'
 import { executeTool, getToolDefinitions } from '../tools'
@@ -16,6 +18,7 @@ import { hybridSearch } from './hybrid'
 import { detectFastIntent } from './intent'
 import { detectLanguage } from './language'
 import { detectObjection } from './objection'
+import { findPendingOverrides } from './override'
 import {
     type PatientInfo,
     extractPatientInfoFromDialogue,
@@ -30,12 +33,6 @@ import {
     SYSTEM_PROMPT_WITH_CONTEXT
 } from './prompts'
 import { resolveSearchQueries } from './query-rewrite'
-
-import { isBookingIntent, handleBookingIntent } from '../../agents/booking/service'
-
-import { findPendingOverrides } from './override'
-
-import { isLearningEnabled } from '../../config/learning'
 
 export interface RagContext {
     conversationId: bigint
@@ -253,15 +250,15 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     if (context && isBookingIntent(query)) {
         debug.intentType = 'booking'
         ragLog('booking intent detected', { query: query.slice(0, 60) })
-        
+
         let history = ''
         const ctx = await getConversationContext(context.conversationId)
         if (ctx.history) history = ctx.history
-            
+
         const answer = await handleBookingIntent(query, context.senderId, history)
-        
+
         await incrementMessageCount(context.conversationId)
-        
+
         const res: RagResponse = {
             answer,
             contextChunks: [],
@@ -651,7 +648,8 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         const pendingOverrides = isLearningEnabled ? await findPendingOverrides(query) : []
         let overrideStr = ''
         if (pendingOverrides.length > 0) {
-            overrideStr = `\n\nВАЖНОЕ ИСПРАВЛЕНИЕ АДМИНИСТРАТОРА (УЧЕСТЬ ПРИ ОТВЕТЕ):\n` + pendingOverrides.join('\n')
+            overrideStr =
+                `\n\nВАЖНОЕ ИСПРАВЛЕНИЕ АДМИНИСТРАТОРА (УЧЕСТЬ ПРИ ОТВЕТЕ):\n` + pendingOverrides.join('\n')
             ragLog('applying pending overrides', { count: pendingOverrides.length })
         }
 
@@ -688,7 +686,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     debug.allScores = allScores
     debug.topScore = searchResults.length > 0 ? Math.max(...allScores) : 0
     debug.topChunkSnippet = searchResults.length > 0 ? searchResults[0].text.slice(0, 120).replace(/\n/g, ' ') : ''
-    
+
     if (searchResults.length > 0) {
         ragLog('top chunk', {
             topScore: Number(debug.topScore.toFixed(3)),

@@ -2,21 +2,20 @@ import Elysia, { status } from 'elysia'
 
 import * as models from './model'
 import { env } from '../../../config/constants'
-import { TokenService } from '../../tokens'
+import { TokenService } from '../../tokens/service'
 import { FacebookAuthService } from './service'
-
-const facebookAuthService = new FacebookAuthService()
-const tokenService = new TokenService()
 
 export const authController = new Elysia({
     name: 'module.auth.facebook',
     prefix: '/auth/facebook',
     detail: { tags: ['Auth'] }
 })
+    .decorate('facebookAuthService', new FacebookAuthService())
+    .decorate('tokenService', new TokenService())
     .model(models)
     .get(
         '/login',
-        ({ query, set }) => {
+        ({ query, set, facebookAuthService }) => {
             if (!env.FACEBOOK_APP_ID) {
                 return status(400, { error: 'FACEBOOK_APP_ID not configured' })
             }
@@ -34,7 +33,7 @@ export const authController = new Elysia({
     )
     .post(
         '/token-from-user',
-        async ({ body }) => {
+        async ({ body, facebookAuthService, tokenService }) => {
             const result = await facebookAuthService.exchangeUserToken(body.userToken)
 
             if ('error' in result) {
@@ -68,7 +67,7 @@ export const authController = new Elysia({
     )
     .get(
         '/callback',
-        async ({ query }) => {
+        async ({ query, facebookAuthService }) => {
             return await facebookAuthService.exchangeCallbackCode(
                 query.code,
                 query.redirect_uri,

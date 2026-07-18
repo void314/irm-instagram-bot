@@ -1,6 +1,6 @@
 import { createQueue, createWorker } from '../../lib/queue'
-import { processCorrection, generateKbSuggestions, applySuggestion } from './service'
 import { log } from '../../services/logger'
+import { applySuggestion, generateKbSuggestions, processCorrection } from './service'
 
 // Queues
 export const correctionsQueue = createQueue('corrections')
@@ -23,14 +23,21 @@ export function initLearningWorkers() {
     })
 
     createWorker('apply-suggestion', async (job) => {
-        log.info({ module: 'learning', jobId: job.id }, `Processing apply-suggestion job: ${job.data.suggestionId}`)
+        log.info(
+            { module: 'learning', jobId: job.id },
+            `Processing apply-suggestion job: ${job.data.suggestionId}`
+        )
         await applySuggestion(BigInt(job.data.suggestionId))
     })
 
     // Setup nightly cron job for generate-kb-suggestions
-    suggestionsQueue.add('nightly-generation', {}, {
-        repeat: {
-            pattern: '0 3 * * *' // Every day at 3:00 AM
+    suggestionsQueue.add(
+        'nightly-generation',
+        {},
+        {
+            repeat: {
+                pattern: '0 3 * * *' // Every day at 3:00 AM
+            }
         }
-    })
+    )
 }

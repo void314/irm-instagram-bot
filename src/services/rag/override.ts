@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
+
 import { db } from '../../db/client'
-import { responseFeedback } from '../../db/schema'
 
 export async function findPendingOverrides(query: string): Promise<string[]> {
     // Basic full-text search on pending feedback queries
@@ -14,6 +14,6 @@ export async function findPendingOverrides(query: string): Promise<string[]> {
             LIMIT 3
         `
     )
-    
-    return results.map(r => r.corrected_response)
+
+    return results.map((r) => r.corrected_response)
 }

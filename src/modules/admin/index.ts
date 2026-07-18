@@ -16,8 +16,8 @@ export const adminController = new Elysia({
     prefix: '/admin',
     detail: { tags: ['Admin'] }
 })
-.use(feedbackController)
-.use(learningController)
+    .use(feedbackController)
+    .use(learningController)
 
 // ─── Conversations ────────────────────────────
 

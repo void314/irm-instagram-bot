@@ -3,17 +3,16 @@ import Elysia, { status } from 'elysia'
 import * as models from './model'
 import { InstagramWebhookService } from './service'
 
-const instagramWebhookService = new InstagramWebhookService()
-
 export const instagramWebhookController = new Elysia({
     name: 'module.webhook.instagram',
     prefix: '/webhook/instagram',
     detail: { tags: ['Webhook'] }
 })
+    .decorate('instagramWebhookService', new InstagramWebhookService())
     .model(models)
     .post(
         '/subscribe',
-        async () => {
+        async ({ instagramWebhookService }) => {
             return await instagramWebhookService.subscribePage()
         },
         {
@@ -30,7 +29,7 @@ export const instagramWebhookController = new Elysia({
     )
     .get(
         '/',
-        ({ query, set }) => {
+        ({ query, set, instagramWebhookService }) => {
             const result = instagramWebhookService.verifyWebhook(
                 query['hub.mode'],
                 query['hub.verify_token'],
@@ -56,7 +55,7 @@ export const instagramWebhookController = new Elysia({
             }
         }
     )
-    .post('/', ({ body }) => instagramWebhookService.processPayload(body), {
+    .post('/', ({ body, instagramWebhookService }) => instagramWebhookService.processPayload(body), {
         body: 'instagramWebhookPayload',
         response: {
             200: 'webhookEventResponse200'

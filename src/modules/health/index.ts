@@ -1,19 +1,18 @@
-import Elysia, { status } from 'elysia'
+import Elysia from 'elysia'
 
 import * as models from './model'
 import { HealthService } from './service'
-
-const healthService = new HealthService()
 
 export const healthController = new Elysia({
     name: 'module.health',
     prefix: '/health',
     detail: { tags: ['Health'] }
 })
+    .decorate('healthService', new HealthService())
     .model(models)
     .get(
         '/',
-        async () => {
+        async ({ healthService }) => {
             return await healthService.check()
         },
         {
