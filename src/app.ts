@@ -21,8 +21,14 @@ import router from './router'
 
 import { env } from './config/constants'
 
+import { servicesCronController } from './modules/services'
 import { tokenCronController } from './modules/tokens'
 import { loggerPlugin } from './services/logger'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+;(BigInt.prototype as any).toJSON = function () {
+    return this.toString()
+}
 
 const app = new Elysia({ name: 'app.root' })
     // * Global Error Handler
@@ -91,6 +97,8 @@ const app = new Elysia({ name: 'app.root' })
     .use(router)
     // * Token Cron
     .use(tokenCronController)
+    // * Services Cron
+    .use(servicesCronController)
 
 export type App = typeof app
 export default app

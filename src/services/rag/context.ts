@@ -72,13 +72,13 @@ export async function updateConversationSummary(conversationId: bigint): Promise
         .join('\n')
 
     try {
-        const summary = await chat([
+        const summary = (await chat([
             {
                 role: 'system',
                 content: SYSTEM_PROMPT_SUMMARY
             },
             { role: 'user', content: dialogue }
-        ])
+        ])).content
 
         await db
             .update(conversations)

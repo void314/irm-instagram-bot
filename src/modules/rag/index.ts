@@ -1,9 +1,9 @@
 import Elysia, { status } from 'elysia'
 
 import { db } from '../../db/client'
-import { documents, chunks } from '../../db/schema'
+import { documents, chunks, conversations } from '../../db/schema'
 import { chunkText } from '../../services/rag/chunker'
-import { runPipeline } from '../../services/rag/orchestrator'
+import { runPipeline, type RagContext } from '../../services/rag/orchestrator'
 import { embedBatch } from '../../services/llm/openrouter'
 import { eq, sql } from 'drizzle-orm'
 import {
@@ -29,9 +29,22 @@ export const ragController = new Elysia({
         '/ask',
         async ({ body }) => {
             try {
-                const ctx = body.conversationId
-                    ? { conversationId: BigInt(body.conversationId) }
-                    : undefined
+                let ctx: RagContext | undefined
+                if (body.conversationId) {
+                    const conversationId = BigInt(body.conversationId)
+                    // RagContext требует senderId (нужен для карточки пациента), поэтому
+                    // подтягиваем его из уже существующей записи разговора, а не полагаемся
+                    // на то, что вызывающая сторона его передаст.
+                    const conv = await db
+                        .select({ senderId: conversations.senderId })
+                        .from(conversations)
+                        .where(eq(conversations.id, conversationId))
+                        .then((rows) => rows[0])
+
+                    if (conv) {
+                        ctx = { conversationId, senderId: conv.senderId }
+                    }
+                }
                 const result = await runPipeline(body.question, ctx, body.verbose ?? false)
                 return result
             } catch (err) {

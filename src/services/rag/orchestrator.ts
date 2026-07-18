@@ -1,14 +1,18 @@
-import { chat } from '../llm/openrouter'
+import { type ToolDefinition, type ToolCall, type ChatMessage, chat } from '../llm/openrouter'
 import { log } from '../logger'
 import { detectFastIntent } from './intent'
 import { detectLanguage } from './language'
 import { hybridSearch } from './hybrid'
-import { checkGrounding } from './grounding'
+import { checkGrounding, type GroundingResult } from './grounding'
 import { getConversationContext, incrementMessageCount } from './context'
+import { getPatient, formatPatientContext, extractPatientInfoFromDialogue, updatePatient, type PatientInfo } from './patient'
+import { findBranchByNameOrCity } from '../../constants/branches'
 import { SYSTEM_PROMPT_NO_CONTEXT, SYSTEM_PROMPT_WITH_CONTEXT } from './prompts'
+import { getToolDefinitions, executeTool } from '../tools'
 
 export interface RagContext {
     conversationId: bigint
+    senderId: string
 }
 
 export interface RagDebug {
@@ -35,6 +39,33 @@ function ragLog(message: string, data?: Record<string, unknown>) {
         return
     }
     log.info({ module: 'rag' }, message)
+}
+
+function injectPrompt(
+    template: string,
+    replacements: Record<string, string>
+): string {
+    let result = template
+    for (const [key, value] of Object.entries(replacements)) {
+        result = result.replace(`{${key}}`, value)
+    }
+    return result
+}
+
+function buildDialogueForExtraction(
+    query: string,
+    history: string,
+    answer: string
+): string {
+    const lines: string[] = []
+    if (history && history !== 'нет') {
+        lines.push('Предыдущий диалог:')
+        lines.push(history)
+        lines.push('')
+    }
+    lines.push(`Пользователь: ${query}`)
+    lines.push(`Ассистент: ${answer}`)
+    return lines.join('\n')
 }
 
 export async function runPipeline(
@@ -81,6 +112,8 @@ export async function runPipeline(
     }
 
     let history = ''
+    let patientStr = ''
+    let patient: PatientInfo | null = null
     if (context) {
         const ctx = await getConversationContext(context.conversationId)
         debug.historyLength = ctx.history.length
@@ -90,6 +123,19 @@ export async function runPipeline(
             historyLength: debug.historyLength
         })
         if (ctx.history) history = ctx.history
+
+        const detectedBranch = findBranchByNameOrCity(query)
+        if (detectedBranch) {
+            await updatePatient(context.senderId, {
+                preferredBranch: detectedBranch.name,
+                preferredBranchRef1cId: detectedBranch.ref1cId
+            })
+            ragLog('patient branch detected', { branch: detectedBranch.name })
+        }
+
+        patient = await getPatient(context.senderId)
+        patientStr = formatPatientContext(patient)
+        ragLog('patient info', { hasPatient: !!patient, patientStr: patientStr || 'none' })
     }
 
     ragLog('hybrid search: embedding query')
@@ -97,15 +143,72 @@ export async function runPipeline(
     debug.searchResultsCount = searchResults.length
     ragLog('hybrid search: results', { count: searchResults.length })
 
+    const tools = getToolDefinitions()
+    const baseReplacements: Record<string, string> = {
+        history: history || 'нет',
+        patientContext: patientStr || ''
+    }
+
+    async function callLlm(systemPrompt: string): Promise<{ content: string; toolCalls?: ToolCall[] }> {
+        return chat(
+            [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: query }
+            ],
+            {
+                tools,
+                tool_choice: 'auto'
+            }
+        )
+    }
+
+    async function callLlmWithTools(systemPrompt: string): Promise<{ content: string; usedTools: boolean }> {
+        const first = await callLlm(systemPrompt)
+
+        if (first.toolCalls && first.toolCalls.length > 0) {
+            ragLog('tools: executing', { count: first.toolCalls.length })
+
+            const toolMessages: ChatMessage[] = [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: query },
+                { role: 'assistant', content: first.content, tool_calls: first.toolCalls }
+            ]
+
+            for (const tc of first.toolCalls) {
+                ragLog('tool call', { id: tc.id, name: tc.function.name, args: tc.function.arguments })
+                try {
+                    const result = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
+                    toolMessages.push({ role: 'tool', content: result, tool_call_id: tc.id })
+                } catch (err) {
+                    toolMessages.push({ role: 'tool', content: `Ошибка: ${String(err)}`, tool_call_id: tc.id })
+                }
+            }
+
+            ragLog('tools: result', { count: first.toolCalls.length })
+            const second = await chat(toolMessages)
+            return { content: second.content, usedTools: true }
+        }
+
+        return { content: first.content, usedTools: false }
+    }
+
     if (searchResults.length === 0) {
-        const systemMsg = SYSTEM_PROMPT_NO_CONTEXT.replace('{history}', history || 'нет')
+        const systemMsg = injectPrompt(SYSTEM_PROMPT_NO_CONTEXT, baseReplacements)
         ragLog('LLM: no context')
-        const answer = await chat([
-            { role: 'system', content: systemMsg },
-            { role: 'user', content: query }
-        ])
+        const { content: answer } = await callLlmWithTools(systemMsg)
         ragLog('LLM: response', { length: answer.length })
-        if (context) await incrementMessageCount(context.conversationId)
+
+        if (context) {
+            await incrementMessageCount(context.conversationId)
+            const dialogue = buildDialogueForExtraction(query, history || 'нет', answer)
+            if (patient) {
+                const updates = await extractPatientInfoFromDialogue(dialogue, patient)
+                if (Object.keys(updates).length > 0) {
+                    await updatePatient(context.senderId, updates)
+                    ragLog('patient: updated', { fields: Object.keys(updates) })
+                }
+            }
+        }
 
         const res: RagResponse = { answer, contextChunks: [], intent: 'query', needsClarification: false }
         if (verbose) res.debug = debug
@@ -125,21 +228,22 @@ export async function runPipeline(
         .map((r) => `[релевантность: ${(r.score * 100).toFixed(0)}%]\n${r.text}`)
         .join('\n\n---\n\n')
 
-    const systemPrompt = SYSTEM_PROMPT_WITH_CONTEXT
-        .replace('{context}', contextStr)
-        .replace('{history}', history || 'нет')
+    const systemPrompt = injectPrompt(SYSTEM_PROMPT_WITH_CONTEXT, {
+        ...baseReplacements,
+        context: contextStr
+    })
 
     ragLog('LLM: with context')
-    const answer = await chat([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: query }
-    ])
-    ragLog('LLM: response', { length: answer.length })
+    const { content: answer, usedTools } = await callLlmWithTools(systemPrompt)
+    ragLog('LLM: response', { length: answer.length, usedTools })
 
-    ragLog('grounding', { maxScore: Number(debug.topScore.toFixed(3)) })
-    const grounding = await checkGrounding(answer, searchResults, query)
+    // Если ответ построен из данных инструмента (цены/расписание), а не из RAG-контекста,
+    // релевантность найденных чанков к нему не относится — проверять на них нечего.
+    const grounding: GroundingResult = usedTools
+        ? { passed: true, needsClarification: false }
+        : await checkGrounding(answer, searchResults, query)
     debug.groundingPassed = grounding.passed
-    ragLog('grounding result', { passed: grounding.passed })
+    ragLog('grounding', { maxScore: Number(debug.topScore.toFixed(3)), skippedDueToTools: usedTools, passed: grounding.passed })
 
     if (grounding.needsClarification && grounding.clarificationQuestion) {
         ragLog('clarification', { reason: 'grounding' })
@@ -154,7 +258,17 @@ export async function runPipeline(
         return res
     }
 
-    if (context) await incrementMessageCount(context.conversationId)
+    if (context) {
+        await incrementMessageCount(context.conversationId)
+        const dialogue = buildDialogueForExtraction(query, history || 'нет', answer)
+        if (patient) {
+            const updates = await extractPatientInfoFromDialogue(dialogue, patient)
+            if (Object.keys(updates).length > 0) {
+                await updatePatient(context.senderId, updates)
+                ragLog('patient: updated', { fields: Object.keys(updates) })
+            }
+        }
+    }
 
     const res: RagResponse = {
         answer,

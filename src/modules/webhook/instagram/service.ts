@@ -5,6 +5,7 @@ import { db } from '../../../db/client'
 import { accounts, conversations, messages } from '../../../db/schema'
 import { log } from '../../../services/logger'
 import { runPipeline } from '../../../services/rag/orchestrator'
+import { ensurePatient, fetchInstagramUserInfo, updatePatient } from '../../../services/rag/patient'
 import { TokenService } from '../../tokens'
 import type {
     InstagramWebhookPayload,
@@ -50,8 +51,6 @@ export class InstagramMessagingService {
         if (env.INSTAGRAM_BUSINESS_ID) {
             pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
         }
-
-        pageToken ??= env.FACEBOOK_PAGE_ACCESS_TOKEN || ''
 
         if (!pageToken) {
             return { status: 'error', message: 'No page access token available' }
@@ -106,8 +105,6 @@ export class InstagramWebhookService {
         if (env.INSTAGRAM_BUSINESS_ID) {
             pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
         }
-
-        pageToken ??= env.FACEBOOK_PAGE_ACCESS_TOKEN || ''
 
         if (!env.FACEBOOK_PAGE_ID || !pageToken) {
             return { error: 'FACEBOOK_PAGE_ID or page access token not configured' }
@@ -260,7 +257,9 @@ export class InstagramWebhookService {
             .where(eq(conversations.senderId, senderId))
             .then((rows) => rows[0])
 
-        if (!conv && env.INSTAGRAM_BUSINESS_ID) {
+        const isNewConversation = !conv
+
+        if (isNewConversation && env.INSTAGRAM_BUSINESS_ID) {
             const [newConv] = await db
                 .insert(conversations)
                 .values({
@@ -278,6 +277,35 @@ export class InstagramWebhookService {
             return
         }
 
+        const patient = await ensurePatient(senderId)
+
+        if (isNewConversation) {
+            const token = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID!)
+            if (token) {
+                const igInfo = await fetchInstagramUserInfo(senderId, token)
+                if (igInfo) {
+                    const updates: Parameters<typeof updatePatient>[1] = {
+                        instagramName: igInfo.name,
+                        instagramUsername: igInfo.username
+                    }
+                    // Показываем модели инстаграм-имя, только пока у пациента ещё нет
+                    // подтверждённого настоящего имени — иначе не перезаписываем источник.
+                    if (!patient.name && !patient.nameSource) {
+                        updates.nameSource = 'instagram'
+                    }
+                    await updatePatient(senderId, updates)
+                    if (!patient.name) {
+                        patient.instagramName = igInfo.name
+                        patient.instagramUsername = igInfo.username
+                    }
+                    log.info(
+                        { module: 'webhook', senderId, name: igInfo.name },
+                        '[webhook] instagram user info fetched'
+                    )
+                }
+            }
+        }
+
         if (env.INSTAGRAM_BUSINESS_ID && text) {
             await db.insert(messages).values({
                 conversationId: conv.id,
@@ -292,7 +320,8 @@ export class InstagramWebhookService {
 
         try {
             const { answer, intent, needsClarification } = await runPipeline(question, {
-                conversationId: conv.id
+                conversationId: conv.id,
+                senderId
             })
 
             log.info(

@@ -15,7 +15,7 @@ export interface HybridSearchResult {
 
 export async function hybridSearch(query: string): Promise<HybridSearchResult[]> {
     const embedding = await generateEmbedding(query)
-    const vectorStr = `[${embedding.join(',')}]`
+    const vectorLiteral = sql.raw(`'[${embedding.join(',')}]'::vector`)
     const topK = env.RAG_TOP_K
     const alpha = 0.5
 
@@ -34,7 +34,7 @@ export async function hybridSearch(query: string): Promise<HybridSearchResult[]>
                     c.id,
                     c.document_id,
                     c.text,
-                    1 - (c.embedding <=> ${sql.raw(`'[${embedding.join(',')}]'::vector`)}) AS vector_score,
+                    1 - (c.embedding <=> ${vectorLiteral}) AS vector_score,
                     COALESCE(ts_rank(c.tsv, plainto_tsquery('russian', ${query})), 0) AS bm25_score,
                     c.metadata
                 FROM chunks c

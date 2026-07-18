@@ -8,7 +8,8 @@ const level = env.NODE_ENV === 'development' ? 'info' : 'error'
 
 export const log = createPinoLogger({
     level,
-    stream: pino.destination({ sync: true })
+    stream: pino.destination({ sync: true }),
+    file: 'log.log'
 })
 
 export const loggerPlugin = log.into({ autoLogging: true })

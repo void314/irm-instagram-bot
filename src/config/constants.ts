@@ -18,7 +18,6 @@ const env = createEnv({
             FACEBOOK_APP_ID: v.optional(v.string()),
             FACEBOOK_APP_SECRET: v.optional(v.string()),
             FACEBOOK_PAGE_ID: v.optional(v.string()),
-            FACEBOOK_PAGE_ACCESS_TOKEN: v.optional(v.string()),
             INSTAGRAM_BUSINESS_ID: v.optional(v.string()),
             FACEBOOK_GRAPH_API_VERSION: v.optional(v.string(), 'v25.0'),
             WEBHOOK_VERIFY_TOKEN: v.optional(v.string()),
@@ -28,7 +27,8 @@ const env = createEnv({
             OPENROUTER_API_KEY: v.optional(v.string()),
             LLM_MODEL: v.optional(v.string(), 'openai/gpt-4o-mini'),
             EMBED_MODEL: v.optional(v.string(), 'google/gemini-embedding-2'),
-            RAG_TOP_K: v.optional(v.number(), 5)
+            RAG_TOP_K: v.optional(v.number(), 5),
+            EXTERNAL_API_BASE_URL: v.optional(v.string(), 'https://rk.etl.uzun.kz/api/v1')
         },
         shared: {
             NODE_ENV: v.optional(
