@@ -359,7 +359,7 @@ adminController.post(
 
         await db
             .update(conversations)
-            .set({ summary: null, messageCount: 0, updatedAt: new Date() })
+            .set({ summary: null, messageCount: 0, metadata: null, updatedAt: new Date() })
             .where(eq(conversations.id, conversationId))
 
         const clearPatient = body.clearPatient ?? true

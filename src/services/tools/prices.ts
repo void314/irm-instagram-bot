@@ -7,6 +7,8 @@ import { findBranchByNameOrCity, getBranchesList } from '../../constants/branche
 import type { Tool, ToolResult } from './types'
 
 const PRICE_MARKERS = /(цен|стоимост|прайс|тариф|поч[её]м|сколько|сколко)/i
+const PRICE_TOKEN_RE = /^(цен|цена|цены|ценник|стоимост|стоимость|прайс|прайслист|тариф|поче?м|сколько|сколко|стоит|стоить|услуг|услуга|услуги)$/i
+const STOP_WORDS = new Set(['на', 'по', 'за', 'об', 'для'])
 const MAX_RESULTS = 20
 
 function tokenize(text: string): string[] {
@@ -22,6 +24,11 @@ function normalizeCitizenship(value: unknown): 'kz' | 'foreign' | null {
     if (['kz', 'рк', 'kazakhstan', 'казахстан', 'резидент'].includes(v)) return 'kz'
     if (['foreign', 'иностранец', 'иностранный', 'нерезидент', 'non-resident'].includes(v)) return 'foreign'
     return null
+}
+
+function isPriceToken(token: string): boolean {
+    if (STOP_WORDS.has(token)) return true
+    return PRICE_TOKEN_RE.test(token)
 }
 
 interface PriceRow {
@@ -43,6 +50,83 @@ function dedupeByNameAndPrice(rows: PriceRow[]): PriceRow[] {
         result.push(row)
     }
     return result
+}
+
+async function findCheapestByPatterns(
+    branchRef: string,
+    citizenship: 'kz' | 'foreign',
+    patterns: string[]
+): Promise<PriceRow | null> {
+    if (patterns.length === 0) return null
+
+    const conditions = patterns.map((pattern) => ilike(services.name, `%${pattern}%`))
+
+    const rows = await db
+        .select({
+            name: services.name,
+            price: services.price,
+            durationMinutes: services.durationMinutes
+        })
+        .from(services)
+        .where(
+            and(
+                eq(services.branchRef1cId, branchRef),
+                eq(services.citizenship, citizenship),
+                or(...conditions)
+            )
+        )
+        .orderBy(services.price)
+        .limit(1)
+
+    return rows[0] ?? null
+}
+
+async function getBasicPriceList(
+    branchRef: string,
+    citizenship: 'kz' | 'foreign'
+): Promise<PriceRow[]> {
+    const categories: Array<{ label: string; patterns: string[] }> = [
+        { label: 'Консультация', patterns: ['консультац', 'прием', 'приём'] },
+        { label: 'УЗИ', patterns: ['узи'] },
+        { label: 'Спермограмма', patterns: ['спермограмм'] },
+        { label: 'Гормоны', patterns: ['гормон'] },
+        { label: 'Пункция', patterns: ['пункци'] },
+        { label: 'Перенос эмбриона', patterns: ['перенос эмбр'] },
+        { label: 'Заморозка эмбрионов', patterns: ['замороз', 'крио', 'эмбри'] }
+    ]
+
+    const rows: PriceRow[] = []
+
+    for (const category of categories) {
+        const row = await findCheapestByPatterns(branchRef, citizenship, category.patterns)
+        if (row) rows.push(row)
+    }
+
+    const deduped = dedupeByNameAndPrice(rows)
+    if (deduped.length > 0) return deduped.slice(0, 10)
+
+    const fallback = await db
+        .select({
+            name: services.name,
+            price: services.price,
+            durationMinutes: services.durationMinutes
+        })
+        .from(services)
+        .where(
+            and(
+                eq(services.branchRef1cId, branchRef),
+                eq(services.citizenship, citizenship)
+            )
+        )
+        .orderBy(services.name)
+        .limit(10)
+
+    return dedupeByNameAndPrice(fallback)
+}
+
+function isGeneralPriceQuery(tokens: string[]): boolean {
+    const meaningful = tokens.filter((token) => !isPriceToken(token))
+    return meaningful.length === 0
 }
 
 export const pricesTool: Tool = {
@@ -81,6 +165,29 @@ export const pricesTool: Tool = {
             }
         }
 
+        if (isGeneralPriceQuery(tokens)) {
+            const baseList = await getBasicPriceList(resolvedBranchRef, citizenship)
+            if (baseList.length === 0) {
+                return {
+                    success: true,
+                    answer:
+                        'К сожалению, я не нашла информации о ценах. ' +
+                        'Рекомендую записаться на консультацию врача, где Вам подробно расскажут о стоимости программ.'
+                }
+            }
+
+            const lines = baseList.map((r) => {
+                const price = r.price ? `${Number(r.price).toLocaleString('ru-RU')} ₸` : 'уточните на приёме'
+                const duration = r.durationMinutes ? ` (${r.durationMinutes} мин)` : ''
+                return `- ${r.name} — ${price}${duration}`
+            })
+
+            return {
+                success: true,
+                answer: `Базовый перечень услуг и цен:\n${lines.join('\n')}\n\nЕсли интересует конкретная услуга — напишите её название.`
+            }
+        }
+
         const conditions = tokens.map(
             (token) => ilike(services.name, `%${token}%`)
         )
@@ -104,24 +211,8 @@ export const pricesTool: Tool = {
         const rows = dedupeByNameAndPrice(rawRows).slice(0, MAX_RESULTS)
 
         if (rows.length === 0 && PRICE_MARKERS.test(query)) {
-            const rawFallback = await db
-                .select({
-                    name: services.name,
-                    price: services.price,
-                    durationMinutes: services.durationMinutes
-                })
-                .from(services)
-                .where(
-                    and(
-                        eq(services.branchRef1cId, resolvedBranchRef),
-                        eq(services.citizenship, citizenship)
-                    )
-                )
-                .limit(50)
-
-            const fallback = dedupeByNameAndPrice(rawFallback).slice(0, 10)
-
-            if (fallback.length === 0) {
+            const baseList = await getBasicPriceList(resolvedBranchRef, citizenship)
+            if (baseList.length === 0) {
                 return {
                     success: true,
                     answer:
@@ -130,7 +221,7 @@ export const pricesTool: Tool = {
                 }
             }
 
-            const lines = fallback.map((r) => {
+            const lines = baseList.map((r) => {
                 const price = r.price ? `${Number(r.price).toLocaleString('ru-RU')} ₸` : 'уточните на приёме'
                 const duration = r.durationMinutes ? ` (${r.durationMinutes} мин)` : ''
                 return `- ${r.name} — ${price}${duration}`
@@ -138,7 +229,7 @@ export const pricesTool: Tool = {
 
             return {
                 success: true,
-                answer: `Вот основные услуги клиники:\n${lines.join('\n')}\n\nЧтобы уточнить конкретную услугу, напишите её название.`
+                answer: `Не нашла точное совпадение по услуге. Вот базовый перечень цен:\n${lines.join('\n')}\n\nЕсли интересует конкретная услуга — напишите её название.`
             }
         }
 

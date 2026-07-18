@@ -78,6 +78,13 @@ export async function updatePatient(
     senderId: string,
     data: Partial<Omit<PatientInfo, 'senderId'>>
 ): Promise<void> {
+    const fields = Object.keys(data).filter((k) => data[k as keyof typeof data] !== undefined)
+    if (fields.length > 0) {
+        log.info(
+            { module: 'patient', senderId, fields, values: fields.map((k) => `${k}=${JSON.stringify(data[k as keyof typeof data])}`) },
+            'patient: saving fields'
+        )
+    }
     await db
         .update(patients)
         .set({ ...data, updatedAt: new Date() })
@@ -92,13 +99,21 @@ export async function fetchInstagramUserInfo(
     try {
         const url = `${FACEBOOK_GRAPH_API}/v25.0/${senderId}?fields=name,username&access_token=${pageAccessToken}`
         const res = await fetch(url)
-        if (!res.ok) return null
+        if (!res.ok) {
+            log.warn({ module: 'patient', senderId, status: res.status, statusText: res.statusText }, 'instagram user info fetch failed')
+            return null
+        }
 
         const data = (await res.json()) as { name?: string; username?: string }
-        if (!data.name && !data.username) return null
+        if (!data.name && !data.username) {
+            log.warn({ module: 'patient', senderId, response: JSON.stringify(data) }, 'instagram user info: empty response')
+            return null
+        }
 
+        log.info({ module: 'patient', senderId, name: data.name, username: data.username }, 'instagram user info fetched')
         return { name: data.name || '', username: data.username || '' }
-    } catch {
+    } catch (err) {
+        log.warn({ module: 'patient', senderId, error: String(err) }, 'instagram user info fetch error')
         return null
     }
 }
@@ -174,6 +189,14 @@ export async function extractPatientInfoFromDialogue(
 
         if (typeof extracted.nameChangeOffered === 'boolean' && extracted.nameChangeOffered) {
             merged.nameChangeOffered = true
+        }
+
+        const filledKeys = Object.keys(merged).filter((k) => merged[k as keyof typeof merged] !== undefined && merged[k as keyof typeof merged] !== null)
+        if (filledKeys.length > 0) {
+            log.info(
+                { module: 'patient', senderId: currentPatient.senderId, extracted: filledKeys, values: filledKeys.map((k) => `${k}=${JSON.stringify(merged[k as keyof typeof merged])}`) },
+                'patient: extracted from dialogue'
+            )
         }
 
         return merged

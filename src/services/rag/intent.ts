@@ -26,7 +26,7 @@ const CLEAR_CONTEXT = [
 ]
 
 export interface IntentResult {
-    type: 'greeting' | 'goodbye' | 'gratitude' | 'clear_context' | 'query'
+    type: 'greeting' | 'goodbye' | 'gratitude' | 'clear_context' | 'objection' | 'query'
     response?: string
 }
 

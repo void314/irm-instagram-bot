@@ -1,5 +1,4 @@
 import { db } from '../../db/client'
-import { generateEmbedding } from '../llm/openrouter'
 import { sql } from 'drizzle-orm'
 import { env } from '../../config/constants'
 
@@ -13,11 +12,18 @@ export interface HybridSearchResult {
     metadata: Record<string, unknown> | null
 }
 
-export async function hybridSearch(query: string): Promise<HybridSearchResult[]> {
-    const embedding = await generateEmbedding(query)
-    const vectorLiteral = sql.raw(`'[${embedding.join(',')}]'::vector`)
+export async function hybridSearch(query: string, embedding?: number[]): Promise<HybridSearchResult[]> {
     const topK = env.RAG_TOP_K
-    const alpha = 0.5
+
+    const vectorColumn = embedding
+        ? sql`, 1 - (c.embedding <=> ${sql.raw(`'[${embedding.join(',')}]'::vector`)}) AS vector_score`
+        : sql`, 0 AS vector_score`
+
+    const scoreExpr = embedding
+        ? sql`(0.5 * vector_score + 0.5 * bm25_score) AS score`
+        : sql`bm25_score AS score`
+
+    const vectorFilter = embedding ? sql`OR vector_score > 0.1` : sql``
 
     const results = await db.execute<{
         id: string
@@ -33,8 +39,8 @@ export async function hybridSearch(query: string): Promise<HybridSearchResult[]>
                 SELECT
                     c.id,
                     c.document_id,
-                    c.text,
-                    1 - (c.embedding <=> ${vectorLiteral}) AS vector_score,
+                    c.text
+                    ${vectorColumn},
                     COALESCE(ts_rank(c.tsv, plainto_tsquery('russian', ${query})), 0) AS bm25_score,
                     c.metadata
                 FROM chunks c
@@ -46,10 +52,10 @@ export async function hybridSearch(query: string): Promise<HybridSearchResult[]>
                 text,
                 vector_score,
                 bm25_score,
-                (${alpha} * vector_score + ${1 - alpha} * bm25_score) AS score,
+                ${scoreExpr},
                 metadata
             FROM scored
-            WHERE vector_score > 0.1 OR bm25_score > 0.01
+            WHERE bm25_score > 0.01 ${vectorFilter}
             ORDER BY score DESC
             LIMIT ${topK}
         `
