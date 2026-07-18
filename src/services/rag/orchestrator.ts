@@ -31,6 +31,8 @@ import {
 } from './prompts'
 import { resolveSearchQueries } from './query-rewrite'
 
+import { isBookingIntent, handleBookingIntent } from '../../agents/booking/service'
+
 export interface RagContext {
     conversationId: bigint
     senderId: string
@@ -238,6 +240,28 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
             answer,
             contextChunks: [],
             intent: fastIntent.type,
+            needsClarification: false
+        }
+        if (verbose) res.debug = debug
+        return res
+    }
+
+    if (context && isBookingIntent(query)) {
+        debug.intentType = 'booking'
+        ragLog('booking intent detected', { query: query.slice(0, 60) })
+        
+        let history = ''
+        const ctx = await getConversationContext(context.conversationId)
+        if (ctx.history) history = ctx.history
+            
+        const answer = await handleBookingIntent(query, context.senderId, history)
+        
+        await incrementMessageCount(context.conversationId)
+        
+        const res: RagResponse = {
+            answer,
+            contextChunks: [],
+            intent: 'booking',
             needsClarification: false
         }
         if (verbose) res.debug = debug

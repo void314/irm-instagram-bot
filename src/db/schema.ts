@@ -2,6 +2,7 @@ import {
     bigint,
     boolean,
     customType,
+    doublePrecision,
     index,
     integer,
     jsonb,
@@ -106,4 +107,55 @@ export const accounts = pgTable('accounts', {
     refreshError: text('refresh_error'),
     lastInteraction: timestamp('last_interaction').defaultNow().notNull(),
     metadata: jsonb('metadata').$type<Record<string, unknown>>()
+})
+
+export const responseFeedback = pgTable('response_feedback', {
+    id: bigint({ mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    responseId: text('response_id'),
+    conversationId: bigint('conversation_id', { mode: 'bigint' }).references(() => conversations.id, { onDelete: 'cascade' }),
+    sessionId: text('session_id'),
+    query: text('query').notNull(),
+    originalResponse: text('original_response').notNull(),
+    correctedResponse: text('corrected_response'),
+    correctionReason: text('correction_reason'),
+    source: text('source').default('admin'),
+    status: text('status').default('pending'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at').defaultNow().notNull()
+})
+
+export const learningDocs = pgTable('learning_docs', {
+    id: bigint({ mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    title: text('title').notNull(),
+    source: text('source').default('learning'),
+    sourceFeedbackIds: jsonb('source_feedback_ids').$type<number[]>(),
+    confidence: doublePrecision('confidence'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at').defaultNow().notNull()
+})
+
+export const learnChunks = pgTable('learn_chunks', {
+    id: bigint({ mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    documentId: bigint('document_id', { mode: 'bigint' })
+        .notNull()
+        .references(() => learningDocs.id, { onDelete: 'cascade' }),
+    index: integer('index').notNull(),
+    text: text('text').notNull(),
+    embedding: vector('embedding', { dimensions: 3072 }),
+    tsv: tsvector('tsv'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at').defaultNow().notNull()
+})
+
+export const kbSuggestions = pgTable('kb_suggestions', {
+    id: bigint({ mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    title: text('title').notNull(),
+    content: text('content').notNull(),
+    sourceFeedbackIds: jsonb('source_feedback_ids').$type<number[]>(),
+    status: text('status').default('pending'),
+    targetDocumentId: bigint('target_document_id', { mode: 'bigint' }).references(() => learningDocs.id),
+    confidence: doublePrecision('confidence'),
+    generatedBy: text('generated_by'),
+    reviewedAt: timestamp('reviewed_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull()
 })

@@ -8,12 +8,14 @@ import { runPipeline } from '../../services/rag/orchestrator'
 import { findDoctor } from '../../services/tools/doctor-search'
 import { pricesTool } from '../../services/tools/prices'
 import { scheduleTool } from '../../services/tools/schedule'
+import { feedbackController } from './feedback'
 
 export const adminController = new Elysia({
     name: 'module.admin',
     prefix: '/admin',
     detail: { tags: ['Admin'] }
 })
+.use(feedbackController)
 
 // ─── Conversations ────────────────────────────
 
