@@ -1,13 +1,14 @@
 import { and, eq, ilike, or } from 'drizzle-orm'
 
+import { findBranchByNameOrCity, getBranchesList } from '../../constants/branches'
 import { db } from '../../db/client'
 import { services } from '../../db/schema'
 import { log } from '../logger'
-import { findBranchByNameOrCity, getBranchesList } from '../../constants/branches'
 import type { Tool, ToolResult } from './types'
 
 const PRICE_MARKERS = /(цен|стоимост|прайс|тариф|поч[её]м|сколько|сколко)/i
-const PRICE_TOKEN_RE = /^(цен|цена|цены|ценник|стоимост|стоимость|прайс|прайслист|тариф|поче?м|сколько|сколко|стоит|стоить|услуг|услуга|услуги)$/i
+const PRICE_TOKEN_RE =
+    /^(цен|цена|цены|ценник|стоимост|стоимость|прайс|прайслист|тариф|поче?м|сколько|сколко|стоит|стоить|услуг|услуга|услуги)$/i
 const STOP_WORDS = new Set(['на', 'по', 'за', 'об', 'для'])
 const MAX_RESULTS = 20
 
@@ -20,7 +21,9 @@ function tokenize(text: string): string[] {
 }
 
 function normalizeCitizenship(value: unknown): 'kz' | 'foreign' | null {
-    const v = String(value ?? '').trim().toLowerCase()
+    const v = String(value ?? '')
+        .trim()
+        .toLowerCase()
     if (['kz', 'рк', 'kazakhstan', 'казахстан', 'резидент'].includes(v)) return 'kz'
     if (['foreign', 'иностранец', 'иностранный', 'нерезидент', 'non-resident'].includes(v)) return 'foreign'
     return null
@@ -69,11 +72,7 @@ async function findCheapestByPatterns(
         })
         .from(services)
         .where(
-            and(
-                eq(services.branchRef1cId, branchRef),
-                eq(services.citizenship, citizenship),
-                or(...conditions)
-            )
+            and(eq(services.branchRef1cId, branchRef), eq(services.citizenship, citizenship), or(...conditions))
         )
         .orderBy(services.price)
         .limit(1)
@@ -81,10 +80,7 @@ async function findCheapestByPatterns(
     return rows[0] ?? null
 }
 
-async function getBasicPriceList(
-    branchRef: string,
-    citizenship: 'kz' | 'foreign'
-): Promise<PriceRow[]> {
+async function getBasicPriceList(branchRef: string, citizenship: 'kz' | 'foreign'): Promise<PriceRow[]> {
     const categories: Array<{ label: string; patterns: string[] }> = [
         { label: 'Консультация', patterns: ['консультац', 'прием', 'приём'] },
         { label: 'УЗИ', patterns: ['узи'] },
@@ -112,12 +108,7 @@ async function getBasicPriceList(
             durationMinutes: services.durationMinutes
         })
         .from(services)
-        .where(
-            and(
-                eq(services.branchRef1cId, branchRef),
-                eq(services.citizenship, citizenship)
-            )
-        )
+        .where(and(eq(services.branchRef1cId, branchRef), eq(services.citizenship, citizenship)))
         .orderBy(services.name)
         .limit(10)
 
@@ -188,9 +179,7 @@ export const pricesTool: Tool = {
             }
         }
 
-        const conditions = tokens.map(
-            (token) => ilike(services.name, `%${token}%`)
-        )
+        const conditions = tokens.map((token) => ilike(services.name, `%${token}%`))
 
         const rawRows = await db
             .select({
@@ -236,8 +225,7 @@ export const pricesTool: Tool = {
         if (rows.length === 0) {
             return {
                 success: true,
-                answer:
-                    'По Вашему запросу ничего не найдено. Попробуйте сформулировать иначе или обратитесь к врачу на консультации.'
+                answer: 'По Вашему запросу ничего не найдено. Попробуйте сформулировать иначе или обратитесь к врачу на консультации.'
             }
         }
 

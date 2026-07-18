@@ -1,8 +1,9 @@
+import { cosineDistance, desc, sql } from 'drizzle-orm'
+
+import { env } from '../../config/constants'
 import { db } from '../../db/client'
 import { chunks } from '../../db/schema'
 import { generateEmbedding } from '../llm/openrouter'
-import { cosineDistance, desc, sql } from 'drizzle-orm'
-import { env } from '../../config/constants'
 
 export interface SearchResult {
     chunkId: bigint

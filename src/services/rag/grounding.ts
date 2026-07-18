@@ -6,12 +6,25 @@ import { SYSTEM_PROMPT_CLARIFICATION } from './prompts'
 // критерий ниже это порог релевантности (score), а не текст ответа.
 const AMBIGUITY_PHRASES = [
     // ru
-    'не могу ответить', 'не хватает информации', 'нет в контексте', 'не нашел', 'не нашла',
-    'уточните', 'не знаю', 'недостаточно информации',
+    'не могу ответить',
+    'не хватает информации',
+    'нет в контексте',
+    'не нашел',
+    'не нашла',
+    'уточните',
+    'не знаю',
+    'недостаточно информации',
     // kk
-    'жауап бере алмаймын', 'ақпарат жеткіліксіз', 'білмеймін', 'нақтылаңызшы',
+    'жауап бере алмаймын',
+    'ақпарат жеткіліксіз',
+    'білмеймін',
+    'нақтылаңызшы',
     // en
-    "don't know", 'not enough information', 'cannot answer', "i'm not sure", 'please clarify'
+    "don't know",
+    'not enough information',
+    'cannot answer',
+    "i'm not sure",
+    'please clarify'
 ]
 
 const SCORE_THRESHOLD = 0.25
@@ -56,24 +69,32 @@ export async function checkGrounding(
     return {
         passed: false,
         needsClarification: true,
-        clarificationQuestion: await generateClarification(query, chunks.map((c) => c.text))
+        clarificationQuestion: await generateClarification(
+            query,
+            chunks.map((c) => c.text)
+        )
     }
 }
 
 async function generateClarification(query: string, contextTexts: string[]): Promise<string> {
-    const contextPreview = contextTexts.map((t) => t.slice(0, 300)).join('\n---\n').slice(0, 2000)
+    const contextPreview = contextTexts
+        .map((t) => t.slice(0, 300))
+        .join('\n---\n')
+        .slice(0, 2000)
 
     try {
-        const response = (await chat([
-            {
-                role: 'system',
-                content: SYSTEM_PROMPT_CLARIFICATION.replace('{context}', contextPreview)
-            },
-            {
-                role: 'user',
-                content: `Вопрос пользователя: ${query}`
-            }
-        ])).content
+        const response = (
+            await chat([
+                {
+                    role: 'system',
+                    content: SYSTEM_PROMPT_CLARIFICATION.replace('{context}', contextPreview)
+                },
+                {
+                    role: 'user',
+                    content: `Вопрос пользователя: ${query}`
+                }
+            ])
+        ).content
 
         return response || 'Не могли бы вы уточнить ваш вопрос? Мне не хватает информации для полного ответа.'
     } catch {

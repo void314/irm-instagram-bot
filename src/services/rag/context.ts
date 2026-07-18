@@ -1,10 +1,10 @@
-import { eq, desc, sql } from 'drizzle-orm'
+import { desc, eq, sql } from 'drizzle-orm'
 
+import { env } from '../../config/constants'
 import { db } from '../../db/client'
 import { conversations, messages } from '../../db/schema'
 import { chat } from '../llm/openrouter'
 import { SYSTEM_PROMPT_SUMMARY } from './prompts'
-import { env } from '../../config/constants'
 
 const BOT_ID = env.INSTAGRAM_BUSINESS_ID
 const MAX_HISTORY = 6
@@ -79,18 +79,18 @@ export async function updateConversationSummary(conversationId: bigint): Promise
 
     if (orderedMessages.length < SUMMARY_THRESHOLD) return
 
-    const dialogue = orderedMessages
-        .map((m) => `${role(m.fromId)}: ${m.text}`)
-        .join('\n')
+    const dialogue = orderedMessages.map((m) => `${role(m.fromId)}: ${m.text}`).join('\n')
 
     try {
-        const summary = (await chat([
-            {
-                role: 'system',
-                content: SYSTEM_PROMPT_SUMMARY
-            },
-            { role: 'user', content: dialogue }
-        ])).content
+        const summary = (
+            await chat([
+                {
+                    role: 'system',
+                    content: SYSTEM_PROMPT_SUMMARY
+                },
+                { role: 'user', content: dialogue }
+            ])
+        ).content
 
         await db
             .update(conversations)

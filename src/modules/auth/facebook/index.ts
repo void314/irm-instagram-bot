@@ -1,16 +1,8 @@
 import Elysia, { status } from 'elysia'
 
+import * as models from './model'
 import { env } from '../../../config/constants'
 import { TokenService } from '../../tokens'
-import {
-    facebookCallbackQuery,
-    facebookLoginQuery,
-    oauthCallbackErrorResponse400,
-    oauthCallbackResponse200,
-    tokenFromUserErrorResponse400,
-    tokenFromUserResponse200,
-    userTokenBody
-} from './model'
 import { FacebookAuthService } from './service'
 
 const facebookAuthService = new FacebookAuthService()
@@ -21,6 +13,7 @@ export const authController = new Elysia({
     prefix: '/auth/facebook',
     detail: { tags: ['Auth'] }
 })
+    .model(models)
     .get(
         '/login',
         ({ query, set }) => {
@@ -32,7 +25,7 @@ export const authController = new Elysia({
             return
         },
         {
-            query: facebookLoginQuery,
+            query: 'facebookLoginQuery',
             detail: {
                 summary: 'Facebook OAuth login',
                 description: 'Redirect to Facebook OAuth dialog to obtain user permissions'
@@ -60,10 +53,10 @@ export const authController = new Elysia({
             return result
         },
         {
-            body: userTokenBody,
+            body: 'userTokenBody',
             response: {
-                200: tokenFromUserResponse200,
-                400: tokenFromUserErrorResponse400
+                200: 'tokenFromUserResponse200',
+                400: 'tokenFromUserErrorResponse400'
             },
             detail: {
                 summary: 'Exchange user token for page access token',
@@ -76,23 +69,17 @@ export const authController = new Elysia({
     .get(
         '/callback',
         async ({ query }) => {
-            const result = await facebookAuthService.exchangeCallbackCode(
+            return await facebookAuthService.exchangeCallbackCode(
                 query.code,
                 query.redirect_uri,
                 query.error_description
             )
-
-            if ('error' in result) {
-                return status(400, result)
-            }
-
-            return result
         },
         {
-            query: facebookCallbackQuery,
+            query: 'facebookCallbackQuery',
             response: {
-                200: oauthCallbackResponse200,
-                400: oauthCallbackErrorResponse400
+                200: 'oauthCallbackResponse200',
+                400: 'oauthCallbackErrorResponse400'
             },
             detail: {
                 summary: 'Facebook OAuth callback',

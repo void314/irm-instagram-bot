@@ -1,12 +1,13 @@
-import Elysia, { t } from 'elysia'
+import Elysia, { status, t } from 'elysia'
+
+import { count, desc, eq, like, sql } from 'drizzle-orm'
 
 import { db } from '../../db/client'
 import { conversations, messages, patients, services } from '../../db/schema'
-import { eq, desc, sql, count, like } from 'drizzle-orm'
+import { runPipeline } from '../../services/rag/orchestrator'
+import { findDoctor } from '../../services/tools/doctor-search'
 import { pricesTool } from '../../services/tools/prices'
 import { scheduleTool } from '../../services/tools/schedule'
-import { findDoctor } from '../../services/tools/doctor-search'
-import { runPipeline } from '../../services/rag/orchestrator'
 
 export const adminController = new Elysia({
     name: 'module.admin',
@@ -75,8 +76,7 @@ adminController.get(
             .then((r) => r[0])
 
         if (!conv) {
-            set.status = 404
-            return { error: 'Conversation not found' }
+            return status(404, { error: 'Conversation not found' })
         }
 
         const msgs = await db
@@ -195,8 +195,7 @@ adminController.get(
             .then((r) => r[0])
 
         if (!patient) {
-            set.status = 404
-            return { error: 'Patient not found' }
+            return status(404, { error: 'Patient not found' })
         }
 
         const convs = await db
@@ -345,8 +344,7 @@ adminController.post(
             .then((rows) => rows[0])
 
         if (!conv) {
-            set.status = 404
-            return { error: 'Conversation not found' }
+            return status(404, { error: 'Conversation not found' })
         }
 
         const messageCount = await db
@@ -395,7 +393,8 @@ adminController.post(
         }),
         detail: {
             summary: 'Clear conversation memory',
-            description: 'Deletes conversation messages, resets summary/messageCount, and optionally clears patient data.'
+            description:
+                'Deletes conversation messages, resets summary/messageCount, and optionally clears patient data.'
         }
     }
 )

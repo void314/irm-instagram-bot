@@ -1,14 +1,6 @@
 import Elysia, { status } from 'elysia'
 
-import {
-    instagramWebhookPayload,
-    subscribeErrorResponse400,
-    subscribeResponse200,
-    webhookChallengeResponse200,
-    webhookErrorResponse403,
-    webhookEventResponse200,
-    webhookVerifyQuery
-} from './model'
+import * as models from './model'
 import { InstagramWebhookService } from './service'
 
 const instagramWebhookService = new InstagramWebhookService()
@@ -18,21 +10,16 @@ export const instagramWebhookController = new Elysia({
     prefix: '/webhook/instagram',
     detail: { tags: ['Webhook'] }
 })
+    .model(models)
     .post(
         '/subscribe',
         async () => {
-            const result = await instagramWebhookService.subscribePage()
-
-            if ('error' in result) {
-                return status(400, result)
-            }
-
-            return result
+            return await instagramWebhookService.subscribePage()
         },
         {
             response: {
-                200: subscribeResponse200,
-                400: subscribeErrorResponse400
+                200: 'subscribeResponse200',
+                400: 'subscribeErrorResponse400'
             },
             detail: {
                 summary: 'Subscribe page to webhook',
@@ -58,10 +45,10 @@ export const instagramWebhookController = new Elysia({
             return status(403, result.error)
         },
         {
-            query: webhookVerifyQuery,
+            query: 'webhookVerifyQuery',
             response: {
-                200: webhookChallengeResponse200,
-                403: webhookErrorResponse403
+                200: 'webhookChallengeResponse200',
+                403: 'webhookErrorResponse403'
             },
             detail: {
                 summary: 'Webhook verification',
@@ -70,9 +57,9 @@ export const instagramWebhookController = new Elysia({
         }
     )
     .post('/', ({ body }) => instagramWebhookService.processPayload(body), {
-        body: instagramWebhookPayload,
+        body: 'instagramWebhookPayload',
         response: {
-            200: webhookEventResponse200
+            200: 'webhookEventResponse200'
         },
         detail: {
             summary: 'Webhook event receiver',

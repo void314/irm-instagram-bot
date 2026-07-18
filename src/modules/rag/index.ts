@@ -1,30 +1,21 @@
 import Elysia, { status } from 'elysia'
 
-import { db } from '../../db/client'
-import { documents, chunks, conversations } from '../../db/schema'
-import { chunkText } from '../../services/rag/chunker'
-import { runPipeline, type RagContext } from '../../services/rag/orchestrator'
-import { embedBatch } from '../../services/llm/openrouter'
 import { eq, sql } from 'drizzle-orm'
-import {
-    askBody,
-    askResponse200,
-    documentCreateBody,
-    documentCreateResponse200,
-    documentDeleteResponse200,
-    documentDetailResponse200,
-    documentsListResponse200,
-    documentUpdateBody,
-    errorResponse400,
-    reembedResponse200
-} from './model'
+
+import * as models from './model'
 import { env } from '../../config/constants'
+import { db } from '../../db/client'
+import { chunks, conversations, documents } from '../../db/schema'
+import { embedBatch } from '../../services/llm/openrouter'
+import { chunkText } from '../../services/rag/chunker'
+import { type RagContext, runPipeline } from '../../services/rag/orchestrator'
 
 export const ragController = new Elysia({
     name: 'module.rag',
     prefix: '/rag',
     detail: { tags: ['RAG'] }
 })
+    .model(models)
     .post(
         '/ask',
         async ({ body }) => {
@@ -48,14 +39,14 @@ export const ragController = new Elysia({
                 const result = await runPipeline(body.question, ctx, body.verbose ?? false)
                 return result
             } catch (err) {
-                return status(500, { error: String(err) })
+                return status(500, { error: String(err) } as models.ErrorResponse400)
             }
         },
         {
-            body: askBody,
+            body: 'askBody',
             response: {
-                200: askResponse200,
-                500: errorResponse400
+                200: 'askResponse200',
+                500: 'errorResponse400'
             },
             detail: {
                 summary: 'Ask a question with RAG',
@@ -98,14 +89,14 @@ export const ragController = new Elysia({
                     chunkCount: textChunks.length
                 }
             } catch (err) {
-                return status(400, { error: String(err) })
+                return status(400, { error: String(err) } as models.ErrorResponse400)
             }
         },
         {
-            body: documentCreateBody,
+            body: 'documentCreateBody',
             response: {
-                200: documentCreateResponse200,
-                400: errorResponse400
+                200: 'documentCreateResponse200',
+                400: 'errorResponse400'
             },
             detail: {
                 summary: 'Create a document',
@@ -145,7 +136,7 @@ export const ragController = new Elysia({
         },
         {
             response: {
-                200: documentsListResponse200
+                200: 'documentsListResponse200'
             },
             detail: {
                 summary: 'List documents',
@@ -165,7 +156,7 @@ export const ragController = new Elysia({
                 .then((rows) => rows[0])
 
             if (!doc) {
-                return status(404, { error: 'Document not found' })
+                return status(404, { error: 'Document not found' } as models.ErrorResponse400)
             }
 
             const chunksRows = await db
@@ -180,16 +171,16 @@ export const ragController = new Elysia({
                 id: doc.id.toString(),
                 title: doc.title,
                 source: doc.source,
-                metadata: doc.metadata,
+                metadata: (doc.metadata ?? undefined) as Record<string, unknown> | undefined,
                 chunkCount: chunksRows.length,
                 text,
                 createdAt: doc.createdAt?.toISOString() ?? ''
-            }
+            } as models.DocumentDetailResponse200
         },
         {
             response: {
-                200: documentDetailResponse200,
-                404: errorResponse400
+                200: 'documentDetailResponse200',
+                404: 'errorResponse400'
             },
             detail: {
                 summary: 'Get document details',
@@ -209,7 +200,7 @@ export const ragController = new Elysia({
                 .then((rows) => rows[0])
 
             if (!existing) {
-                return status(404, { error: 'Document not found' })
+                return status(404, { error: 'Document not found' } as models.ErrorResponse400)
             }
 
             const updateData: Partial<{ title: string; metadata: Record<string, unknown> }> = {}
@@ -259,10 +250,10 @@ export const ragController = new Elysia({
             }
         },
         {
-            body: documentUpdateBody,
+            body: 'documentUpdateBody',
             response: {
-                200: documentCreateResponse200,
-                404: errorResponse400
+                200: 'documentCreateResponse200',
+                404: 'errorResponse400'
             },
             detail: {
                 summary: 'Update a document',
@@ -282,7 +273,7 @@ export const ragController = new Elysia({
                 .then((rows) => rows[0])
 
             if (!existing) {
-                return status(404, { error: 'Document not found' })
+                return status(404, { error: 'Document not found' } as models.ErrorResponse400)
             }
 
             await db.delete(documents).where(eq(documents.id, docId))
@@ -291,8 +282,8 @@ export const ragController = new Elysia({
         },
         {
             response: {
-                200: documentDeleteResponse200,
-                404: errorResponse400
+                200: 'documentDeleteResponse200',
+                404: 'errorResponse400'
             },
             detail: {
                 summary: 'Delete a document',
@@ -303,18 +294,13 @@ export const ragController = new Elysia({
     .post(
         '/documents/reembed',
         async () => {
-            const allChunks = await db
-                .select({ id: chunks.id, text: chunks.text })
-                .from(chunks)
+            const allChunks = await db.select({ id: chunks.id, text: chunks.text }).from(chunks)
 
             let reembedded = 0
 
             for (const chunk of allChunks) {
                 const embedding = (await embedBatch([chunk.text]))[0]
-                await db
-                    .update(chunks)
-                    .set({ embedding })
-                    .where(eq(chunks.id, chunk.id))
+                await db.update(chunks).set({ embedding }).where(eq(chunks.id, chunk.id))
                 reembedded++
             }
 
@@ -322,7 +308,7 @@ export const ragController = new Elysia({
         },
         {
             response: {
-                200: reembedResponse200
+                200: 'reembedResponse200'
             },
             detail: {
                 summary: 'Re-embed all chunks',

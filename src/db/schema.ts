@@ -1,4 +1,16 @@
-import { bigint, boolean, customType, index, integer, jsonb, numeric, pgTable, text, timestamp, vector } from 'drizzle-orm/pg-core'
+import {
+    bigint,
+    boolean,
+    customType,
+    index,
+    integer,
+    jsonb,
+    numeric,
+    pgTable,
+    text,
+    timestamp,
+    vector
+} from 'drizzle-orm/pg-core'
 
 const tsvector = customType<{ data: string | null }>({
     dataType() {

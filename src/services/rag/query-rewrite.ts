@@ -128,10 +128,11 @@ Latest query: ${query}
 Search query:`
 
     try {
-        const response = await chat(
-            [{ role: 'user', content: prompt }],
-            { model: EXPANDER_MODEL, temperature: 0, max_tokens: 80 }
-        )
+        const response = await chat([{ role: 'user', content: prompt }], {
+            model: EXPANDER_MODEL,
+            temperature: 0,
+            max_tokens: 80
+        })
 
         const expanded = response.content.trim()
         if (expanded) {
@@ -168,7 +169,9 @@ export async function resolveSearchQueries(
     const extras: string[] = []
 
     const wantsServices =
-        /(?:услуг(?:а|и)?|процедур(?:а|ы)?|направлени(?:е|я)|что\s+делаете|что\s+лечите|какие\s+услуги)/iu.test(lower)
+        /(?:услуг(?:а|и)?|процедур(?:а|ы)?|направлени(?:е|я)|что\s+делаете|что\s+лечите|какие\s+услуги)/iu.test(
+            lower
+        )
     if (wantsServices) {
         extras.push('прайс услуги')
         extras.push('список услуг клиники')

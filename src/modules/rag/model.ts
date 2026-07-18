@@ -85,3 +85,5 @@ export const errorResponse400 = v.object({
 export type AskBody = v.InferOutput<typeof askBody>
 export type DocumentCreateBody = v.InferOutput<typeof documentCreateBody>
 export type DocumentUpdateBody = v.InferOutput<typeof documentUpdateBody>
+export type DocumentDetailResponse200 = v.InferOutput<typeof documentDetailResponse200>
+export type ErrorResponse400 = v.InferOutput<typeof errorResponse400>

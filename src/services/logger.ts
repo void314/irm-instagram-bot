@@ -13,4 +13,3 @@ export const log = createPinoLogger({
 })
 
 export const loggerPlugin = log.into({ autoLogging: true })
-

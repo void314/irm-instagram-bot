@@ -1,5 +1,5 @@
-import { log } from '../logger'
 import { env } from '../../config/constants'
+import { log } from '../logger'
 
 export interface MDoctor {
     id: string
@@ -91,10 +91,7 @@ export async function findDoctor(query: string): Promise<MDoctor | null> {
             .filter((d) => d.score > 0)
             .sort((a, b) => b.score - a.score)
 
-        log.info(
-            { module: 'tools', query, matches: scored.length, total: allDoctors.length },
-            'doctor search'
-        )
+        log.info({ module: 'tools', query, matches: scored.length, total: allDoctors.length }, 'doctor search')
 
         return scored.length > 0 ? scored[0].doctor : null
     } catch (err) {

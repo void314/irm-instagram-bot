@@ -1,3 +1,5 @@
+import { status } from 'elysia'
+
 import { eq } from 'drizzle-orm'
 
 import { env } from '../../../config/constants'
@@ -115,7 +117,7 @@ export class InstagramMessagingService {
 export class InstagramWebhookService {
     constructor(private readonly instagramMessagingService = new InstagramMessagingService()) {}
 
-    public async subscribePage(): Promise<SubscribeResponse200 | SubscribeErrorResponse400> {
+    public async subscribePage() {
         let pageToken: string | null = null
 
         if (env.INSTAGRAM_BUSINESS_ID) {
@@ -123,7 +125,9 @@ export class InstagramWebhookService {
         }
 
         if (!env.FACEBOOK_PAGE_ID || !pageToken) {
-            return { error: 'FACEBOOK_PAGE_ID or page access token not configured' }
+            return status(400, {
+                error: 'FACEBOOK_PAGE_ID or page access token not configured'
+            } as SubscribeErrorResponse400)
         }
 
         const base = `https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION || 'v25.0'}`
@@ -135,17 +139,17 @@ export class InstagramWebhookService {
         const data = await response.json()
 
         if (!response.ok) {
-            return {
+            return status(400, {
                 error: 'Failed to subscribe page to webhook',
                 hint: SUBSCRIBE_PERMISSION_HINT
-            }
+            } as SubscribeErrorResponse400)
         }
 
         return {
             success: true,
             response: data,
             hint: null
-        }
+        } as SubscribeResponse200
     }
 
     public verifyWebhook(mode?: string, token?: string, challenge?: string): WebhookVerificationResult {
@@ -365,7 +369,10 @@ export class InstagramWebhookService {
                 for (const chunk of chunks) {
                     const result = await this.instagramMessagingService.sendTextMessage(senderId, chunk)
                     if (result.status === 'error') {
-                        log.error({ module: 'webhook', error: result.message, chunkLength: chunk.length }, '[webhook] reply chunk failed')
+                        log.error(
+                            { module: 'webhook', error: result.message, chunkLength: chunk.length },
+                            '[webhook] reply chunk failed'
+                        )
                         lastOk = false
                         break
                     }

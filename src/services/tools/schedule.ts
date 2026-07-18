@@ -1,7 +1,7 @@
-import { log } from '../logger'
 import { env } from '../../config/constants'
+import { log } from '../logger'
+import { type MDoctor, findDoctor } from './doctor-search'
 import type { Tool, ToolResult } from './types'
-import { findDoctor, type MDoctor } from './doctor-search'
 
 const API_BASE = env.EXTERNAL_API_BASE_URL || 'https://rk.etl.uzun.kz/api/v1'
 
@@ -46,17 +46,17 @@ function formatDate(d: Date): string {
 }
 
 const DAY_NAMES_SHORT: Record<number, string> = {
-    1: 'пн', 2: 'вт', 3: 'ср', 4: 'чт', 5: 'пт', 6: 'сб', 0: 'вс'
+    1: 'пн',
+    2: 'вт',
+    3: 'ср',
+    4: 'чт',
+    5: 'пт',
+    6: 'сб',
+    0: 'вс'
 }
 
-function formatSchedule(
-    doctor: MDoctor,
-    schedule: ScheduleDay[]
-): string {
-    const lines: string[] = [
-        `Расписание врача ${doctor.fullName} на текущую неделю:`,
-        ''
-    ]
+function formatSchedule(doctor: MDoctor, schedule: ScheduleDay[]): string {
+    const lines: string[] = [`Расписание врача ${doctor.fullName} на текущую неделю:`, '']
 
     for (const day of schedule) {
         const dayName = DAY_NAMES_SHORT[day.dayOfWeek] || ''
@@ -111,22 +111,17 @@ export const scheduleTool: Tool = {
         sunday.setDate(sunday.getDate() + 6)
 
         try {
-            const url =
-                `${API_BASE}/doctors/${doctor.id}/schedule?from=${formatDate(monday)}&to=${formatDate(sunday)}`
+            const url = `${API_BASE}/doctors/${doctor.id}/schedule?from=${formatDate(monday)}&to=${formatDate(sunday)}`
             const res = await fetch(url, {
                 headers: { Accept: 'application/json' },
                 signal: AbortSignal.timeout(10000)
             })
 
             if (!res.ok) {
-                log.error(
-                    { module: 'tools', status: res.status, doctorId: doctor.id },
-                    'schedule API error'
-                )
+                log.error({ module: 'tools', status: res.status, doctorId: doctor.id }, 'schedule API error')
                 return {
                     success: true,
-                    answer:
-                        'Не удалось получить расписание. Попробуйте позже или запишитесь через кол-центр.'
+                    answer: 'Не удалось получить расписание. Попробуйте позже или запишитесь через кол-центр.'
                 }
             }
 
@@ -134,8 +129,7 @@ export const scheduleTool: Tool = {
             if (!body.success || !body.data) {
                 return {
                     success: true,
-                    answer:
-                        'Не удалось загрузить расписание. Попробуйте позже.'
+                    answer: 'Не удалось загрузить расписание. Попробуйте позже.'
                 }
             }
 
@@ -153,8 +147,7 @@ export const scheduleTool: Tool = {
             log.error({ module: 'tools', error: String(err) }, 'schedule fetch failed')
             return {
                 success: true,
-                answer:
-                    'Не удалось загрузить расписание. Попробуйте позже.'
+                answer: 'Не удалось загрузить расписание. Попробуйте позже.'
             }
         }
     }

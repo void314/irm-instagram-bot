@@ -67,4 +67,3 @@ export async function decryptToken(ciphertext: string, iv: string): Promise<stri
 
     return new TextDecoder().decode(decrypted)
 }
-

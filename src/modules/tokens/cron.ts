@@ -1,4 +1,5 @@
 import Elysia from 'elysia'
+
 import { TokenService } from './service'
 
 const tokenService = new TokenService()

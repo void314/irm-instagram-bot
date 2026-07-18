@@ -1,3 +1,5 @@
+import { status } from 'elysia'
+
 import { env } from '../../config/constants'
 import { TokenService } from '../tokens'
 import type { InstagramProfileResponse200, InstagramProfileResponse400 } from './model'
@@ -10,15 +12,21 @@ type InstagramProfile = {
 const tokenService = new TokenService()
 
 export class InstagramService {
-    public async getProfile(): Promise<InstagramProfileResponse200 | InstagramProfileResponse400> {
+    public async getProfile() {
         if (!env.INSTAGRAM_BUSINESS_ID) {
-            return { status: 'error', message: 'Missing INSTAGRAM_BUSINESS_ID' }
+            return status(400, {
+                status: 'error',
+                message: 'Missing INSTAGRAM_BUSINESS_ID'
+            } as InstagramProfileResponse400)
         }
 
         const pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
 
         if (!pageToken) {
-            return { status: 'error', message: 'No page access token available' }
+            return status(400, {
+                status: 'error',
+                message: 'No page access token available'
+            } as InstagramProfileResponse400)
         }
 
         const url = new URL(
@@ -31,10 +39,10 @@ export class InstagramService {
         const data = (await response.json()) as { error?: { message?: string } } & InstagramProfile
 
         if (!response.ok) {
-            return {
+            return status(400, {
                 status: 'error',
                 message: data?.error?.message || 'Instagram API request failed'
-            }
+            } as InstagramProfileResponse400)
         }
 
         return {
@@ -43,6 +51,6 @@ export class InstagramService {
                 id: data.id,
                 username: data.username
             }
-        }
+        } as InstagramProfileResponse200
     }
 }

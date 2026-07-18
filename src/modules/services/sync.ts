@@ -1,9 +1,9 @@
-import { eq, and } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 
-import { db } from '../../db/client'
-import { services } from '../../db/schema'
 import { env } from '../../config/constants'
 import { BRANCHES } from '../../constants/branches'
+import { db } from '../../db/client'
+import { services } from '../../db/schema'
 
 const API_BASE = env.EXTERNAL_API_BASE_URL || 'https://rk.etl.uzun.kz/api/v1'
 
@@ -102,13 +102,10 @@ export async function fetchAndUpdateServices(): Promise<SyncResult> {
         // между филиалами (например, у Шымкента список называется "ИРМ Шымкент",
         // без слова "Основной"). Забираем все прайс-листы филиала и классифицируем
         // их по гражданству локально.
-        const priceListsRes = await fetch(
-            `${API_BASE}/price-lists?branchId=${branch.ref1cId}&limit=100`,
-            {
-                headers: { Accept: 'application/json' },
-                signal: AbortSignal.timeout(15000)
-            }
-        )
+        const priceListsRes = await fetch(`${API_BASE}/price-lists?branchId=${branch.ref1cId}&limit=100`, {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(15000)
+        })
 
         if (!priceListsRes.ok) {
             continue
@@ -122,13 +119,10 @@ export async function fetchAndUpdateServices(): Promise<SyncResult> {
         for (const pl of priceListsData.data.priceLists) {
             const citizenship = classifyCitizenship(pl.name)
 
-            const treeRes = await fetch(
-                `${API_BASE}/medical-services/tree?priceListId=${pl.ref1cId}`,
-                {
-                    headers: { Accept: 'application/json' },
-                    signal: AbortSignal.timeout(15000)
-                }
-            )
+            const treeRes = await fetch(`${API_BASE}/medical-services/tree?priceListId=${pl.ref1cId}`, {
+                headers: { Accept: 'application/json' },
+                signal: AbortSignal.timeout(15000)
+            })
 
             if (!treeRes.ok) continue
 
@@ -144,12 +138,7 @@ export async function fetchAndUpdateServices(): Promise<SyncResult> {
         const existing = await db
             .select({ id: services.id })
             .from(services)
-            .where(
-                and(
-                    eq(services.ref1cId, item.ref1cId),
-                    eq(services.priceListId, item.priceListId)
-                )
-            )
+            .where(and(eq(services.ref1cId, item.ref1cId), eq(services.priceListId, item.priceListId)))
             .then((rows) => rows[0])
 
         if (existing) {

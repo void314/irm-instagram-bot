@@ -1,18 +1,35 @@
-import { type ToolDefinition, type ToolCall, type ChatMessage, chat } from '../llm/openrouter'
+import { env } from '../../config/constants'
+import { findBranchByNameOrCity, getBranchesList } from '../../constants/branches'
+import { type ChatMessage, type ToolCall, type ToolDefinition, chat } from '../llm/openrouter'
+import { generateEmbedding } from '../llm/openrouter'
 import { log } from '../logger'
+import { executeTool, getToolDefinitions } from '../tools'
+import {
+    type PendingInfo,
+    getConversationContext,
+    getPendingInfo,
+    incrementMessageCount,
+    setPendingInfo
+} from './context'
+import { type GroundingResult, checkGrounding } from './grounding'
+import { hybridSearch } from './hybrid'
 import { detectFastIntent } from './intent'
 import { detectLanguage } from './language'
 import { detectObjection } from './objection'
-import { hybridSearch } from './hybrid'
-import { checkGrounding, type GroundingResult } from './grounding'
-import { getConversationContext, incrementMessageCount, getPendingInfo, setPendingInfo, type PendingInfo } from './context'
-import { getPatient, formatPatientContext, extractPatientInfoFromDialogue, updatePatient, type PatientInfo } from './patient'
-import { findBranchByNameOrCity, getBranchesList } from '../../constants/branches'
-import { SYSTEM_PROMPT_NO_CONTEXT, SYSTEM_PROMPT_WITH_CONTEXT, SYSTEM_PROMPT_OBJECTION, OBJECTION_SCRIPTS } from './prompts'
-import { getToolDefinitions, executeTool } from '../tools'
+import {
+    type PatientInfo,
+    extractPatientInfoFromDialogue,
+    formatPatientContext,
+    getPatient,
+    updatePatient
+} from './patient'
+import {
+    OBJECTION_SCRIPTS,
+    SYSTEM_PROMPT_NO_CONTEXT,
+    SYSTEM_PROMPT_OBJECTION,
+    SYSTEM_PROMPT_WITH_CONTEXT
+} from './prompts'
 import { resolveSearchQueries } from './query-rewrite'
-import { generateEmbedding } from '../llm/openrouter'
-import { env } from '../../config/constants'
 
 export interface RagContext {
     conversationId: bigint
@@ -45,10 +62,7 @@ function ragLog(message: string, data?: Record<string, unknown>) {
     log.info({ module: 'rag' }, message)
 }
 
-function injectPrompt(
-    template: string,
-    replacements: Record<string, string>
-): string {
+function injectPrompt(template: string, replacements: Record<string, string>): string {
     let result = template
     for (const [key, value] of Object.entries(replacements)) {
         result = result.replace(`{${key}}`, value)
@@ -58,7 +72,8 @@ function injectPrompt(
 
 const PRICE_INTENT_RE = /(цен|стоимост|прайс|тариф|поч[её]м|сколько|сколко)/i
 
-const CITIZENSHIP_FOREIGN_RE = /(иностран|нерезидент|foreign|non[-\s]?resident|снг|рф|росси|узбек|киргиз|кыргыз|таджик|туркмен|азербайдж|армян|белорус|украин|европ|америк|китай|инд)/i
+const CITIZENSHIP_FOREIGN_RE =
+    /(иностран|нерезидент|foreign|non[-\s]?resident|снг|рф|росси|узбек|киргиз|кыргыз|таджик|туркмен|азербайдж|армян|белорус|украин|европ|америк|китай|инд)/i
 const CITIZENSHIP_KZ_RE = /(рк|казахстан|kazakhstan|kz|резидент)/i
 const CITIZENSHIP_CITIZEN_RE = /гражданин(ка)?/i
 
@@ -135,20 +150,26 @@ function buildCitizenshipQuestion(): string {
     return 'Подскажите, пожалуйста, Ваше гражданство (гражданин РК или иностранный гражданин) — стоимость услуг отличается.'
 }
 
-function removeMissing(missing: Array<'branch' | 'citizenship'>, item: 'branch' | 'citizenship'): Array<'branch' | 'citizenship'> {
+function removeMissing(
+    missing: Array<'branch' | 'citizenship'>,
+    item: 'branch' | 'citizenship'
+): Array<'branch' | 'citizenship'> {
     return missing.filter((value) => value !== item)
 }
 
 function parseHistory(historyStr: string): { role: 'user' | 'assistant'; content: string }[] {
     if (!historyStr || historyStr === 'нет') return []
-    return historyStr.split('\n').map((line) => {
-        const colonIndex = line.indexOf(': ')
-        if (colonIndex === -1) return null
-        const role = line.slice(0, colonIndex).trim()
-        const content = line.slice(colonIndex + 2).trim()
-        if (role !== 'user' && role !== 'assistant') return null
-        return { role: role as 'user' | 'assistant', content }
-    }).filter(Boolean) as { role: 'user' | 'assistant'; content: string }[]
+    return historyStr
+        .split('\n')
+        .map((line) => {
+            const colonIndex = line.indexOf(': ')
+            if (colonIndex === -1) return null
+            const role = line.slice(0, colonIndex).trim()
+            const content = line.slice(colonIndex + 2).trim()
+            if (role !== 'user' && role !== 'assistant') return null
+            return { role: role as 'user' | 'assistant', content }
+        })
+        .filter(Boolean) as { role: 'user' | 'assistant'; content: string }[]
 }
 
 const SYNTHETIC_BOOSTS = new Set(['прайс услуги', 'список услуг клиники'])
@@ -162,11 +183,7 @@ function pickSemanticQuery(originalQuery: string, searchQueries: string[]): stri
     return originalQuery
 }
 
-function buildDialogueForExtraction(
-    query: string,
-    history: string,
-    answer: string
-): string {
+function buildDialogueForExtraction(query: string, history: string, answer: string): string {
     const lines: string[] = []
     if (history && history !== 'нет') {
         lines.push('Предыдущий диалог:')
@@ -178,11 +195,7 @@ function buildDialogueForExtraction(
     return lines.join('\n')
 }
 
-export async function runPipeline(
-    query: string,
-    context?: RagContext,
-    verbose = false
-): Promise<RagResponse> {
+export async function runPipeline(query: string, context?: RagContext, verbose = false): Promise<RagResponse> {
     const debug: RagDebug = {
         intentType: 'query',
         historyLength: 0,
@@ -500,7 +513,8 @@ export async function runPipeline(
             return res
         }
 
-        if (updatedPatient?.preferredBranchRef1cId) toolArgs.branch_ref1c_id = updatedPatient.preferredBranchRef1cId
+        if (updatedPatient?.preferredBranchRef1cId)
+            toolArgs.branch_ref1c_id = updatedPatient.preferredBranchRef1cId
         if (updatedPatient?.preferredBranch) toolArgs.branch_name = updatedPatient.preferredBranch
         if (effectiveCitizenship) toolArgs.citizenship = effectiveCitizenship
 
@@ -544,9 +558,14 @@ export async function runPipeline(
     const emb = await generateEmbedding(semanticQuery)
 
     const allResults = await Promise.all(
-        searchQueries.map((q) => hybridSearch(q, q.toLowerCase() === semanticQuery.toLowerCase() ? emb : undefined))
+        searchQueries.map((q) =>
+            hybridSearch(q, q.toLowerCase() === semanticQuery.toLowerCase() ? emb : undefined)
+        )
     )
-    const searchResults = allResults.flat().sort((a, b) => b.score - a.score).slice(0, env.RAG_TOP_K)
+    const searchResults = allResults
+        .flat()
+        .sort((a, b) => b.score - a.score)
+        .slice(0, env.RAG_TOP_K)
     debug.searchResultsCount = searchResults.length
     ragLog('hybrid search: results', { queries: searchQueries.length, total: searchResults.length })
 
@@ -620,7 +639,12 @@ export async function runPipeline(
             }
         }
 
-        const res: RagResponse = { answer: finalAnswer, contextChunks: [], intent: 'query', needsClarification: false }
+        const res: RagResponse = {
+            answer: finalAnswer,
+            contextChunks: [],
+            intent: 'query',
+            needsClarification: false
+        }
         if (verbose) res.debug = debug
         return res
     }
@@ -655,7 +679,11 @@ export async function runPipeline(
         ? { passed: true, needsClarification: false }
         : await checkGrounding(rawAnswer, searchResults, query)
     debug.groundingPassed = grounding.passed
-    ragLog('grounding', { maxScore: Number(debug.topScore.toFixed(3)), skippedDueToTools: usedTools, passed: grounding.passed })
+    ragLog('grounding', {
+        maxScore: Number(debug.topScore.toFixed(3)),
+        skippedDueToTools: usedTools,
+        passed: grounding.passed
+    })
 
     if (grounding.needsClarification && grounding.clarificationQuestion) {
         ragLog('clarification', { reason: 'grounding' })

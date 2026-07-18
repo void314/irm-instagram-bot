@@ -1,4 +1,5 @@
 import Elysia from 'elysia'
+
 import { log } from '../../services/logger'
 import { fetchAndUpdateServices } from './sync'
 

@@ -1,10 +1,10 @@
 import { eq } from 'drizzle-orm'
 
+import { findBranchByNameOrCity } from '../../constants/branches'
 import { db } from '../../db/client'
 import { patients } from '../../db/schema'
-import { log } from '../logger'
 import { chat } from '../llm/openrouter'
-import { findBranchByNameOrCity } from '../../constants/branches'
+import { log } from '../logger'
 
 const FACEBOOK_GRAPH_API = 'https://graph.facebook.com'
 
@@ -81,7 +81,12 @@ export async function updatePatient(
     const fields = Object.keys(data).filter((k) => data[k as keyof typeof data] !== undefined)
     if (fields.length > 0) {
         log.info(
-            { module: 'patient', senderId, fields, values: fields.map((k) => `${k}=${JSON.stringify(data[k as keyof typeof data])}`) },
+            {
+                module: 'patient',
+                senderId,
+                fields,
+                values: fields.map((k) => `${k}=${JSON.stringify(data[k as keyof typeof data])}`)
+            },
             'patient: saving fields'
         )
     }
@@ -100,17 +105,26 @@ export async function fetchInstagramUserInfo(
         const url = `${FACEBOOK_GRAPH_API}/v25.0/${senderId}?fields=name,username&access_token=${pageAccessToken}`
         const res = await fetch(url)
         if (!res.ok) {
-            log.warn({ module: 'patient', senderId, status: res.status, statusText: res.statusText }, 'instagram user info fetch failed')
+            log.warn(
+                { module: 'patient', senderId, status: res.status, statusText: res.statusText },
+                'instagram user info fetch failed'
+            )
             return null
         }
 
         const data = (await res.json()) as { name?: string; username?: string }
         if (!data.name && !data.username) {
-            log.warn({ module: 'patient', senderId, response: JSON.stringify(data) }, 'instagram user info: empty response')
+            log.warn(
+                { module: 'patient', senderId, response: JSON.stringify(data) },
+                'instagram user info: empty response'
+            )
             return null
         }
 
-        log.info({ module: 'patient', senderId, name: data.name, username: data.username }, 'instagram user info fetched')
+        log.info(
+            { module: 'patient', senderId, name: data.name, username: data.username },
+            'instagram user info fetched'
+        )
         return { name: data.name || '', username: data.username || '' }
     } catch (err) {
         log.warn({ module: 'patient', senderId, error: String(err) }, 'instagram user info fetch error')
@@ -154,10 +168,13 @@ export async function extractPatientInfoFromDialogue(
 ): Promise<Partial<Omit<PatientInfo, 'senderId'>>> {
     let rawContent = ''
     try {
-        const answer = await chat([
-            { role: 'system', content: EXTRACTION_PROMPT },
-            { role: 'user', content: dialogue }
-        ], { model: 'openai/gpt-4o-mini', response_format: { type: 'json_object' } })
+        const answer = await chat(
+            [
+                { role: 'system', content: EXTRACTION_PROMPT },
+                { role: 'user', content: dialogue }
+            ],
+            { model: 'openai/gpt-4o-mini', response_format: { type: 'json_object' } }
+        )
 
         rawContent = answer.content
         const extracted = JSON.parse(extractJsonObject(rawContent)) as Partial<Omit<PatientInfo, 'senderId'>>
@@ -191,10 +208,17 @@ export async function extractPatientInfoFromDialogue(
             merged.nameChangeOffered = true
         }
 
-        const filledKeys = Object.keys(merged).filter((k) => merged[k as keyof typeof merged] !== undefined && merged[k as keyof typeof merged] !== null)
+        const filledKeys = Object.keys(merged).filter(
+            (k) => merged[k as keyof typeof merged] !== undefined && merged[k as keyof typeof merged] !== null
+        )
         if (filledKeys.length > 0) {
             log.info(
-                { module: 'patient', senderId: currentPatient.senderId, extracted: filledKeys, values: filledKeys.map((k) => `${k}=${JSON.stringify(merged[k as keyof typeof merged])}`) },
+                {
+                    module: 'patient',
+                    senderId: currentPatient.senderId,
+                    extracted: filledKeys,
+                    values: filledKeys.map((k) => `${k}=${JSON.stringify(merged[k as keyof typeof merged])}`)
+                },
                 'patient: extracted from dialogue'
             )
         }
@@ -202,7 +226,12 @@ export async function extractPatientInfoFromDialogue(
         return merged
     } catch (err) {
         log.error(
-            { module: 'patient', senderId: currentPatient.senderId, error: String(err), rawContent: rawContent.slice(0, 500) },
+            {
+                module: 'patient',
+                senderId: currentPatient.senderId,
+                error: String(err),
+                rawContent: rawContent.slice(0, 500)
+            },
             'patient info extraction failed'
         )
         return {}

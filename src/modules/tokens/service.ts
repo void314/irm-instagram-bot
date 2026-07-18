@@ -1,8 +1,9 @@
+import { eq } from 'drizzle-orm'
+
+import { env } from '../../config/constants'
 import { db } from '../../db/client'
 import { accounts } from '../../db/schema'
-import { eq } from 'drizzle-orm'
-import { env } from '../../config/constants'
-import { encryptToken, decryptToken } from '../../lib/encryption'
+import { decryptToken, encryptToken } from '../../lib/encryption'
 
 const FB_GRAPH_URL = 'https://graph.facebook.com/v25.0'
 
@@ -101,9 +102,7 @@ export class TokenService {
                 return { success: false, error: msg }
             }
 
-            const expiresAt = data.expires_in
-                ? new Date(Date.now() + data.expires_in * 1000)
-                : null
+            const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : null
 
             const { ciphertext, iv } = await encryptToken(data.access_token)
             await db
@@ -129,9 +128,7 @@ export class TokenService {
     }
 
     async refreshAllActive(): Promise<{ refreshed: number; failed: number; errors: string[] }> {
-        const all = await db
-            .select({ igId: accounts.igId })
-            .from(accounts)
+        const all = await db.select({ igId: accounts.igId }).from(accounts)
 
         let refreshed = 0
         let failed = 0

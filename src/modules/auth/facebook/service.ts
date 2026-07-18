@@ -1,3 +1,5 @@
+import { status } from 'elysia'
+
 import { env } from '../../../config/constants'
 import type {
     OauthCallbackErrorResponse400,
@@ -68,7 +70,7 @@ export class FacebookAuthService {
         pageAccessToken: string
     ): Promise<{ igId: string; username?: string } | null> {
         const res = await this.graphApiGet(
-        `/${pageId}?fields=instagram_business_account{id,username}`,
+            `/${pageId}?fields=instagram_business_account{id,username}`,
             pageAccessToken
         )
 
@@ -180,19 +182,18 @@ export class FacebookAuthService {
         return result
     }
 
-    public async exchangeCallbackCode(
-        code: string | undefined,
-        redirectUri?: string,
-        errorDescription?: string
-    ): Promise<OauthCallbackResponse200 | OauthCallbackErrorResponse400> {
+    public async exchangeCallbackCode(code: string | undefined, redirectUri?: string, errorDescription?: string) {
         if (!code) {
-            return { error: 'Missing code parameter', error_description: errorDescription }
+            return status(400, {
+                error: 'Missing code parameter',
+                error_description: errorDescription
+            } as OauthCallbackErrorResponse400)
         }
 
         if (!env.FACEBOOK_APP_ID || !env.FACEBOOK_APP_SECRET) {
-            return {
+            return status(400, {
                 error: 'FACEBOOK_APP_ID or FACEBOOK_APP_SECRET not configured'
-            }
+            } as OauthCallbackErrorResponse400)
         }
 
         const tokenUrl = new URL(FB_TOKEN_URL)
@@ -208,10 +209,13 @@ export class FacebookAuthService {
         }
 
         if (!tokenRes.ok || !tokenData.access_token) {
-            return { error: 'Token exchange failed', details: tokenData.error }
+            return status(400, {
+                error: 'Token exchange failed',
+                details: tokenData.error
+            } as OauthCallbackErrorResponse400)
         }
 
-        return { success: true, message: 'OAuth completed' }
+        return { success: true, message: 'OAuth completed' } as OauthCallbackResponse200
     }
 
     private async graphApiGet(path: string, token: string): Promise<GraphApiResponse> {
