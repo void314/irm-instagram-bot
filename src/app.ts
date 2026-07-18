@@ -24,12 +24,15 @@ import { env } from './config/constants'
 import { servicesCronController } from './modules/services'
 import { tokenCronController } from './modules/tokens'
 import { loggerPlugin } from './services/logger'
+import { initLearningWorkers } from './agents/learning/scheduler'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 
 ;(BigInt.prototype as any).toJSON = function () {
     return this.toString()
 }
+
+initLearningWorkers()
 
 const app = new Elysia({ name: 'app.root' })
     // * Global Error Handler

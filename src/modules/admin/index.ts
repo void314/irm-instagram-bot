@@ -9,6 +9,7 @@ import { findDoctor } from '../../services/tools/doctor-search'
 import { pricesTool } from '../../services/tools/prices'
 import { scheduleTool } from '../../services/tools/schedule'
 import { feedbackController } from './feedback'
+import { learningController } from './learning'
 
 export const adminController = new Elysia({
     name: 'module.admin',
@@ -16,6 +17,7 @@ export const adminController = new Elysia({
     detail: { tags: ['Admin'] }
 })
 .use(feedbackController)
+.use(learningController)
 
 // ─── Conversations ────────────────────────────
 

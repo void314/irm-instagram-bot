@@ -33,6 +33,10 @@ import { resolveSearchQueries } from './query-rewrite'
 
 import { isBookingIntent, handleBookingIntent } from '../../agents/booking/service'
 
+import { findPendingOverrides } from './override'
+
+import { isLearningEnabled } from '../../config/learning'
+
 export interface RagContext {
     conversationId: bigint
     senderId: string
@@ -644,7 +648,14 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     }
 
     if (searchResults.length === 0) {
-        const systemMsg = injectPrompt(SYSTEM_PROMPT_NO_CONTEXT, baseReplacements)
+        const pendingOverrides = isLearningEnabled ? await findPendingOverrides(query) : []
+        let overrideStr = ''
+        if (pendingOverrides.length > 0) {
+            overrideStr = `\n\nВАЖНОЕ ИСПРАВЛЕНИЕ АДМИНИСТРАТОРА (УЧЕСТЬ ПРИ ОТВЕТЕ):\n` + pendingOverrides.join('\n')
+            ragLog('applying pending overrides', { count: pendingOverrides.length })
+        }
+
+        const systemMsg = injectPrompt(SYSTEM_PROMPT_NO_CONTEXT, baseReplacements) + overrideStr
         ragLog('LLM: no context')
         const { content: answer } = await callLlmWithTools(systemMsg)
         const personalizedAnswer = personalizeAnswer(answer, patient)
@@ -675,20 +686,30 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
     const allScores = searchResults.map((r) => r.score)
     debug.allScores = allScores
-    debug.topScore = Math.max(...allScores)
-    debug.topChunkSnippet = searchResults[0].text.slice(0, 120).replace(/\n/g, ' ')
-    ragLog('top chunk', {
-        topScore: Number(debug.topScore.toFixed(3)),
-        snippet: debug.topChunkSnippet
-    })
+    debug.topScore = searchResults.length > 0 ? Math.max(...allScores) : 0
+    debug.topChunkSnippet = searchResults.length > 0 ? searchResults[0].text.slice(0, 120).replace(/\n/g, ' ') : ''
+    
+    if (searchResults.length > 0) {
+        ragLog('top chunk', {
+            topScore: Number(debug.topScore.toFixed(3)),
+            snippet: debug.topChunkSnippet
+        })
+    }
 
     const contextStr = searchResults
         .map((r) => `[релевантность: ${(r.score * 100).toFixed(0)}%]\n${r.text}`)
         .join('\n\n---\n\n')
 
+    const pendingOverrides = isLearningEnabled ? await findPendingOverrides(query) : []
+    let overrideStr = ''
+    if (pendingOverrides.length > 0) {
+        overrideStr = `\n\nВАЖНОЕ ИСПРАВЛЕНИЕ АДМИНИСТРАТОРА (УЧЕСТЬ ПРИ ОТВЕТЕ):\n` + pendingOverrides.join('\n')
+        ragLog('applying pending overrides', { count: pendingOverrides.length })
+    }
+
     const systemPrompt = injectPrompt(SYSTEM_PROMPT_WITH_CONTEXT, {
         ...baseReplacements,
-        context: contextStr
+        context: contextStr + overrideStr
     })
 
     ragLog('LLM: with context')

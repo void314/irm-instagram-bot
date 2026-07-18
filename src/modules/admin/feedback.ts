@@ -3,6 +3,7 @@ import Elysia, { status, t } from 'elysia'
 
 import { db } from '../../db/client'
 import { conversations, messages, patients, responseFeedback, services } from '../../db/schema'
+import { correctionsQueue } from '../../agents/learning/scheduler'
 
 export const feedbackController = new Elysia({
     name: 'module.admin.feedback',
@@ -69,6 +70,8 @@ feedbackController.post(
             })
             .where(eq(responseFeedback.id, feedbackId))
             
+        await correctionsQueue.add('process', { feedbackId: id })
+            
         return { success: true }
     },
     {
@@ -97,6 +100,8 @@ feedbackController.post(
             status: 'pending',
             source: 'admin'
         }).returning()
+        
+        await correctionsQueue.add('process', { feedbackId: inserted[0].id.toString() })
         
         return inserted[0]
     },

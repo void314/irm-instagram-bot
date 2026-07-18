@@ -3,6 +3,8 @@ import { sql } from 'drizzle-orm'
 import { env } from '../../config/constants'
 import { db } from '../../db/client'
 
+import { isLearningEnabled } from '../../config/learning'
+
 export interface HybridSearchResult {
     chunkId: bigint
     documentId: bigint
@@ -24,7 +26,8 @@ export async function hybridSearch(query: string, embedding?: number[]): Promise
 
     const vectorFilter = embedding ? sql`OR vector_score > 0.1` : sql``
 
-    const results = await db.execute<{
+    // RAG Store search (weight 1.0)
+    const ragResults = await db.execute<{
         id: string
         document_id: string
         text: string
@@ -51,7 +54,7 @@ export async function hybridSearch(query: string, embedding?: number[]): Promise
                 text,
                 vector_score,
                 bm25_score,
-                ${scoreExpr},
+                (${scoreExpr}) * 1.0 AS score,
                 metadata
             FROM scored
             WHERE bm25_score > 0.01 ${vectorFilter}
@@ -60,7 +63,44 @@ export async function hybridSearch(query: string, embedding?: number[]): Promise
         `
     )
 
-    return results.map((r) => ({
+    // Learning Store search (weight 0.5)
+    const learnResults = isLearningEnabled ? await db.execute<{
+        id: string
+        document_id: string
+        text: string
+        vector_score: string
+        bm25_score: string
+        score: string
+        metadata: string
+    }>(
+        sql`
+            WITH scored AS (
+                SELECT
+                    c.id,
+                    c.document_id,
+                    c.text
+                    ${vectorColumn},
+                    COALESCE(ts_rank(c.tsv, plainto_tsquery('russian', ${query})), 0) AS bm25_score,
+                    c.metadata
+                FROM learn_chunks c
+                WHERE c.embedding IS NOT NULL
+            )
+            SELECT
+                id,
+                document_id,
+                text,
+                vector_score,
+                bm25_score,
+                (${scoreExpr}) * 0.5 AS score,
+                metadata
+            FROM scored
+            WHERE bm25_score > 0.01 ${vectorFilter}
+            ORDER BY score DESC
+            LIMIT ${topK}
+        `
+    ) : []
+
+    const allResults = [...ragResults, ...learnResults].map((r) => ({
         chunkId: BigInt(r.id),
         documentId: BigInt(r.document_id),
         text: r.text,
@@ -69,4 +109,16 @@ export async function hybridSearch(query: string, embedding?: number[]): Promise
         score: Number.parseFloat(r.score),
         metadata: r.metadata ? JSON.parse(r.metadata as string) : null
     }))
+
+    // Deduplicate by text and sort by score
+    const uniqueMap = new Map<string, HybridSearchResult>()
+    for (const r of allResults) {
+        if (!uniqueMap.has(r.text) || uniqueMap.get(r.text)!.score < r.score) {
+            uniqueMap.set(r.text, r)
+        }
+    }
+
+    return Array.from(uniqueMap.values())
+        .sort((a, b) => b.score - a.score)
+        .slice(0, topK)
 }
