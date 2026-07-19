@@ -21,12 +21,6 @@ export interface FormattedContext {
     metadata: Record<string, unknown> | null
 }
 
-export type PendingInfo = {
-    type: 'prices'
-    query: string
-    missing: Array<'branch' | 'citizenship'>
-}
-
 export async function getConversationContext(conversationId: bigint): Promise<FormattedContext> {
     const conv = await db
         .select({
@@ -65,6 +59,34 @@ export async function getConversationContext(conversationId: bigint): Promise<Fo
         needsSummary: !!needsSummary,
         metadata: conv?.metadata ?? null
     }
+}
+
+export function getLastBotMessage(history: string): string | null {
+    if (!history || history === 'нет') return null
+    const lines = history
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+    for (let i = lines.length - 1; i >= 0; i--) {
+        if (lines[i].startsWith('assistant:')) {
+            return lines[i].slice('assistant:'.length).trim()
+        }
+    }
+    return null
+}
+
+export async function updateConversationMetadata(
+    conversationId: bigint,
+    updates: Record<string, unknown>,
+    currentMetadata?: Record<string, unknown> | null
+): Promise<void> {
+    const meta = currentMetadata ? { ...currentMetadata } : {}
+    Object.assign(meta, updates)
+
+    await db
+        .update(conversations)
+        .set({ metadata: meta, updatedAt: new Date() })
+        .where(eq(conversations.id, conversationId))
 }
 
 export async function updateConversationSummary(conversationId: bigint): Promise<void> {
@@ -108,53 +130,5 @@ export async function incrementMessageCount(conversationId: bigint): Promise<voi
             messageCount: sql`${conversations.messageCount} + 1`,
             updatedAt: new Date()
         })
-        .where(eq(conversations.id, conversationId))
-}
-
-function normalizeMetadata(meta: Record<string, unknown> | null | undefined): Record<string, unknown> {
-    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return {}
-    return { ...meta }
-}
-
-export function getPendingInfo(metadata: Record<string, unknown> | null | undefined): PendingInfo | null {
-    if (!metadata || typeof metadata !== 'object') return null
-    const candidate = (metadata as Record<string, unknown>).pendingInfo
-    if (!candidate || typeof candidate !== 'object') return null
-
-    const pending = candidate as Record<string, unknown>
-    if (pending.type !== 'prices') return null
-    if (typeof pending.query !== 'string' || !pending.query.trim()) return null
-    if (!Array.isArray(pending.missing)) return null
-
-    const missing = pending.missing
-        .filter((item) => item === 'branch' || item === 'citizenship')
-        .map((item) => item as 'branch' | 'citizenship')
-
-    if (missing.length === 0) return null
-
-    return {
-        type: 'prices',
-        query: pending.query,
-        missing
-    }
-}
-
-export async function setPendingInfo(
-    conversationId: bigint,
-    pending: PendingInfo | null,
-    currentMetadata?: Record<string, unknown> | null
-): Promise<void> {
-    const metadata = normalizeMetadata(currentMetadata)
-    if (pending) {
-        metadata.pendingInfo = pending
-    } else {
-        delete metadata.pendingInfo
-    }
-
-    const nextMeta = Object.keys(metadata).length > 0 ? metadata : null
-
-    await db
-        .update(conversations)
-        .set({ metadata: nextMeta, updatedAt: new Date() })
         .where(eq(conversations.id, conversationId))
 }

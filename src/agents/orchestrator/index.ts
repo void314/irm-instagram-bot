@@ -1,6 +1,11 @@
 import { findBranchByNameOrCity } from '../../constants/branches'
 import { log } from '../../services/logger'
-import { getConversationContext, getPendingInfo, incrementMessageCount } from '../../services/rag/context'
+import {
+    getConversationContext,
+    getLastBotMessage,
+    incrementMessageCount,
+    updateConversationMetadata
+} from '../../services/rag/context'
 import { detectIntentLLM } from '../../services/rag/intent'
 import { detectLanguage } from '../../services/rag/language'
 import {
@@ -62,24 +67,59 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         groundingPassed: true
     }
 
-    const detectedLang = detectLanguage(query)
-    debug.language = detectedLang
+    // 0. Load context & patient info early (for language, last bot message, existence checks)
+    let history = ''
+    let patientStr = ''
+    let patient = null
+    let convoMetadata = null
+    let lastBotMessage: string | null = null
+    let effectiveLang: 'ru' | 'kk' | 'en' = 'ru'
 
-    log.info({ module: 'orchestrator', language: detectedLang }, 'Pipeline started')
+    if (context) {
+        const ctx = await getConversationContext(context.conversationId)
+        debug.historyLength = ctx.history.length
+        if (ctx.history) history = ctx.history
+        convoMetadata = ctx.metadata
+        lastBotMessage = getLastBotMessage(history)
+    }
 
-    // 1. Detect Intent via LLM Routing
-    const intentResult = await detectIntentLLM(query)
+    // Determine language: try fresh detection → fallback to metadata → fallback to 'ru'
+    const freshLang = detectLanguage(query)
+    if (freshLang) {
+        effectiveLang = freshLang
+        // Cache language on first confident detection
+        if (context && !convoMetadata?.language) {
+            await updateConversationMetadata(context.conversationId, { language: freshLang }, convoMetadata)
+            convoMetadata = { ...(convoMetadata || {}), language: freshLang }
+        }
+    } else if (convoMetadata?.language === 'kk' || convoMetadata?.language === 'en') {
+        effectiveLang = convoMetadata.language
+    }
+
+    debug.language = effectiveLang
+    log.info(
+        { module: 'orchestrator', language: effectiveLang, source: freshLang ? 'fresh' : 'cached' },
+        'Pipeline started'
+    )
+
+    // 1. Detect Intent via LLM Routing (with last bot message for context)
+    const intentResult = await detectIntentLLM(query, lastBotMessage)
     debug.intentType = intentResult.type
-    log.info({ module: 'orchestrator', intent: intentResult.type, language: detectedLang }, 'Intent detected')
+    log.info({ module: 'orchestrator', intent: intentResult.type, language: effectiveLang }, 'Intent detected')
 
     // 2. Fast Conversation Intents (greeting, goodbye, etc.)
-    if (context && ['greeting', 'goodbye', 'gratitude', 'clear_context'].includes(intentResult.type)) {
+    const isFirstMessage = history.trim().length === 0
+    if (
+        context &&
+        ['greeting', 'goodbye', 'gratitude', 'clear_context', 'provide_name'].includes(intentResult.type)
+    ) {
         const convRes = await handleConversationIntent(
             query,
-            detectedLang,
+            effectiveLang,
             context.senderId,
             context.conversationId,
-            intentResult.type
+            intentResult.type,
+            isFirstMessage
         )
         if (convRes) {
             const res: RagResponse = {
@@ -95,11 +135,11 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
     // 3. Booking Intent
     if (context && intentResult.type === 'booking') {
-        let history = ''
+        let bookingHistory = ''
         const ctx = await getConversationContext(context.conversationId)
-        if (ctx.history) history = ctx.history
+        if (ctx.history) bookingHistory = ctx.history
 
-        const answer = await handleBookingIntent(query, context.senderId, history, detectedLang)
+        const answer = await handleBookingIntent(query, context.senderId, bookingHistory, effectiveLang)
 
         await incrementMessageCount(context.conversationId)
 
@@ -113,20 +153,8 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         return res
     }
 
-    // 3. Load Context & Patient Info
-    let history = ''
-    let patientStr = ''
-    let patient = null
-    let convoMetadata = null
-    let pendingInfo = null
-
+    // 4. Load full patient info for remaining flows
     if (context) {
-        const ctx = await getConversationContext(context.conversationId)
-        debug.historyLength = ctx.history.length
-        if (ctx.history) history = ctx.history
-        convoMetadata = ctx.metadata
-        pendingInfo = getPendingInfo(ctx.metadata)
-
         const detectedBranch = findBranchByNameOrCity(query)
         if (detectedBranch) {
             await updatePatient(context.senderId, {
@@ -139,40 +167,9 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         patientStr = formatPatientContext(patient)
     }
 
-    // 4. Pending Info Resolution
-    if (context && pendingInfo && pendingInfo.type === 'prices') {
-        const { answer, missingInfo, updatedPatient } = await handlePriceIntent(
-            query,
-            patient,
-            context.senderId,
-            context.conversationId,
-            convoMetadata
-        )
-
-        const finalAnswer = personalizeAnswer(answer, updatedPatient)
-        await incrementMessageCount(context.conversationId)
-
-        if (!missingInfo && updatedPatient) {
-            const dialogue = buildDialogueForExtraction(query, history || 'нет', finalAnswer)
-            const updates = await extractPatientInfoFromDialogue(dialogue, updatedPatient)
-            if (Object.keys(updates).length > 0) {
-                await updatePatient(context.senderId, updates)
-            }
-        }
-
-        const res: RagResponse = {
-            answer: finalAnswer,
-            contextChunks: [],
-            intent: 'query',
-            needsClarification: false
-        }
-        if (verbose) res.debug = debug
-        return res
-    }
-
     // 5. Objection Detection
     if (intentResult.type === 'objection') {
-        const objectionAnswer = await checkAndHandleObjection(query, detectedLang, patientStr, patient, history)
+        const objectionAnswer = await checkAndHandleObjection(query, effectiveLang, patientStr, patient, history)
         if (objectionAnswer) {
             const personalized = personalizeAnswer(objectionAnswer, patient)
             const finalAnswer = context
@@ -201,15 +198,15 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         }
     }
 
-    // 6. Direct Price Intent
+    // 6. Price Intent
     if (intentResult.type === 'prices') {
         const { answer, missingInfo, updatedPatient } = await handlePriceIntent(
             query,
             patient,
             context ? context.senderId : '',
             context ? context.conversationId : BigInt(0),
-            convoMetadata,
-            detectedLang
+            effectiveLang,
+            history
         )
 
         const personalized = personalizeAnswer(answer, updatedPatient)

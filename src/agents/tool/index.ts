@@ -1,6 +1,6 @@
-import { findBranchByNameOrCity, getBranchesList } from '../../constants/branches'
+import { getBranchesList } from '../../constants/branches'
+import { chat } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
-import { type PendingInfo, setPendingInfo } from '../../services/rag/context'
 import { type PatientInfo, updatePatient } from '../../services/rag/patient'
 import { executeTool } from '../../services/tools'
 
@@ -18,25 +18,93 @@ function buildCitizenshipQuestion(lang: 'ru' | 'kk' | 'en'): string {
     return 'Подскажите, пожалуйста, Ваше гражданство (гражданин РК или иностранный гражданин) — стоимость услуг отличается.'
 }
 
+const CITIZENSHIP_EXTRACTION_PROMPT = `Ты — классификатор гражданства.
+Проанализируй ответ пользователя и определи его гражданство.
+
+Правила:
+- Если пользователь явно указал, что он гражданин РК, Казахстана, или Резидент — верни "kz"
+- Если пользователь явно указал, что он иностранец, нерезидент, гражданин другой страны — верни "foreign"
+- Если пользователь не ответил на вопрос о гражданстве, или ответ неясен — верни "unknown"
+
+Ответь строго в формате JSON: {"citizenship": "kz" | "foreign" | "unknown"}`
+
+async function extractCitizenshipFromQuery(query: string): Promise<'kz' | 'foreign' | null> {
+    try {
+        const result = await chat(
+            [
+                { role: 'system', content: CITIZENSHIP_EXTRACTION_PROMPT },
+                { role: 'user', content: query }
+            ],
+            {
+                model: 'openai/gpt-4o-mini',
+                temperature: 0,
+                max_tokens: 30,
+                response_format: { type: 'json_object' }
+            }
+        )
+
+        const parsed = JSON.parse(result.content)
+        const citizenship = parsed.citizenship
+
+        if (citizenship === 'kz' || citizenship === 'foreign') {
+            log.info(
+                { module: 'agent:tool', citizenship, source: 'llm_extraction' },
+                'Citizenship extracted from user response'
+            )
+            return citizenship
+        }
+
+        return null
+    } catch (e) {
+        log.warn({ module: 'agent:tool', error: String(e) }, 'Citizenship extraction failed')
+        return null
+    }
+}
+
 export async function handlePriceIntent(
     query: string,
     patient: PatientInfo | null,
     senderId: string,
     conversationId: bigint,
-    convoMetadata: Record<string, unknown> | null,
-    lang: 'ru' | 'kk' | 'en' = 'ru'
+    lang: 'ru' | 'kk' | 'en' = 'ru',
+    history?: string
 ): Promise<{ answer: string; missingInfo: boolean; updatedPatient: PatientInfo | null }> {
     const toolArgs: Record<string, unknown> = { query }
-    const updatedPatient = patient
+    let updatedPatient = patient
 
-    const effectiveCitizenship = updatedPatient?.citizenship
+    // Try to extract citizenship from user response if missing
+    let effectiveCitizenship = updatedPatient?.citizenship
+    if (!effectiveCitizenship) {
+        const extractedCitizenship = await extractCitizenshipFromQuery(query)
+        if (extractedCitizenship) {
+            await updatePatient(senderId, { citizenship: extractedCitizenship })
+            effectiveCitizenship = extractedCitizenship
+            updatedPatient = {
+                ...(updatedPatient ?? {
+                    senderId,
+                    name: null,
+                    instagramName: null,
+                    instagramUsername: null,
+                    instagramProfilePic: null,
+                    citizenship: null,
+                    phone: null,
+                    preferredLang: null,
+                    preferredBranch: null,
+                    preferredBranchRef1cId: null,
+                    hasBookedConsultation: false,
+                    nameSource: null,
+                    nameChangeOffered: false
+                }),
+                citizenship: extractedCitizenship
+            }
+        }
+    }
 
     const missing: Array<'branch' | 'citizenship'> = []
     if (!updatedPatient?.preferredBranchRef1cId) missing.push('branch')
     if (!effectiveCitizenship) missing.push('citizenship')
 
     if (missing.length > 0) {
-        await setPendingInfo(conversationId, { type: 'prices', query, missing }, convoMetadata)
         const baseAnswer = missing.includes('branch') ? buildBranchQuestion(lang) : buildCitizenshipQuestion(lang)
         return { answer: baseAnswer, missingInfo: true, updatedPatient }
     }
@@ -60,11 +128,4 @@ export async function handlePriceIntent(
     }
 
     return { answer, missingInfo: false, updatedPatient }
-}
-
-export function removeMissing(
-    missing: Array<'branch' | 'citizenship'>,
-    item: 'branch' | 'citizenship'
-): Array<'branch' | 'citizenship'> {
-    return missing.filter((value) => value !== item)
 }

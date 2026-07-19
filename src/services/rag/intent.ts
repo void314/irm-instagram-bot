@@ -1,64 +1,169 @@
 import { chat } from '../llm/openrouter'
 
 export interface IntentResult {
-    type: 'greeting' | 'goodbye' | 'gratitude' | 'clear_context' | 'objection' | 'query' | 'booking' | 'prices'
+    type:
+        | 'greeting'
+        | 'goodbye'
+        | 'gratitude'
+        | 'clear_context'
+        | 'objection'
+        | 'query'
+        | 'booking'
+        | 'prices'
+        | 'provide_name'
 }
 
-const RESPONSES: Record<string, { ru: string; kk: string; en: string }> = {
-    greeting: {
-        ru: 'Здравствуйте! IRM Clinic, консультант Айгерим. Чем я могу Вам помочь?',
-        kk: 'Сәлеметсіз бе! IRM Clinic, консультант Айгерим. Сізге қалай көмектесе аламын?',
-        en: 'Hello! IRM Clinic, consultant Aigerim. How can I help you?'
-    },
-    goodbye: {
-        ru: 'До свидания! Благодарим за обращение в IRM Clinic. Всего доброго!',
-        kk: 'Сау болыңыз! IRM Clinic-ке хабарласқаныңызға рахмет. Тек жақсылық тілейміз!',
-        en: 'Goodbye! Thank you for contacting IRM Clinic. All the best!'
-    },
-    gratitude: {
-        ru: 'Пожалуйста! Если у Вас будут вопросы — обращайтесь в IRM Clinic.',
-        kk: 'Оқасы жоқ! Сұрақтарыңыз болса, IRM Clinic-ке хабарласыңыз.',
-        en: "You're welcome! If you have any questions, please contact IRM Clinic."
-    },
-    clear_context: {
-        ru: 'Диалог очищен. Чем я могу Вам помочь?',
-        kk: 'Диалог тазартылды. Сізге қалай көмектесе аламын?',
-        en: 'Dialog cleared. How can I help you?'
-    }
+const GOODBYE_RESPONSES: Record<'ru' | 'kk' | 'en', string> = {
+    ru: 'До свидания! Благодарим за обращение в IRM Clinic. Всего доброго!',
+    kk: 'Сау болыңыз! IRM Clinic-ке хабарласқаныңызға рахмет. Тек жақсылық тілейміз!',
+    en: 'Goodbye! Thank you for contacting IRM Clinic. All the best!'
 }
 
-export function getFastIntentResponse(type: string, language: 'ru' | 'kk' | 'en'): string | null {
-    if (RESPONSES[type]) {
-        return RESPONSES[type][language] || RESPONSES[type]['ru']
+const GOODBYE_RESPONSES_NAMED: Record<'ru' | 'kk' | 'en', (name: string) => string> = {
+    ru: (name) => `До свидания, ${name}! Благодарим за обращение в IRM Clinic. Всего доброго!`,
+    kk: (name) => `Сау болыңыз, ${name}! IRM Clinic-ке хабарласқаныңызға рахмет. Тек жақсылық тілейміз!`,
+    en: (name) => `Goodbye, ${name}! Thank you for contacting IRM Clinic. All the best!`
+}
+
+const GRATITUDE_RESPONSES: Record<'ru' | 'kk' | 'en', string> = {
+    ru: 'Пожалуйста! Если у Вас будут вопросы — обращайтесь в IRM Clinic.',
+    kk: 'Оқасы жоқ! Сұрақтарыңыз болса, IRM Clinic-ке хабарласыңыз.',
+    en: "You're welcome! If you have any questions, please contact IRM Clinic."
+}
+
+const GRATITUDE_RESPONSES_NAMED: Record<'ru' | 'kk' | 'en', (name: string) => string> = {
+    ru: (name) => `Пожалуйста, ${name}! Если у Вас будут вопросы — обращайтесь в IRM Clinic.`,
+    kk: (name) => `Оқасы жоқ, ${name}! Сұрақтарыңыз болса, IRM Clinic-ке хабарласыңыз.`,
+    en: (name) => `You're welcome, ${name}! If you have any questions, please contact IRM Clinic.`
+}
+
+const CLEAR_CONTEXT_RESPONSES: Record<'ru' | 'kk' | 'en', string> = {
+    ru: 'Диалог очищен. Чем я могу Вам помочь?',
+    kk: 'Диалог тазартылды. Сізге қалай көмектесе аламын?',
+    en: 'Dialog cleared. How can I help you?'
+}
+
+const GREETING_FULL: Record<'ru' | 'kk' | 'en', string> = {
+    ru: 'Здравствуйте! IRM Clinic, консультант Айгерим. Чем я могу Вам помочь?',
+    kk: 'Сәлеметсіз бе! IRM Clinic, консультант Айгерим. Сізге қалай көмектесе аламын?',
+    en: 'Hello! IRM Clinic, consultant Aigerim. How can I help you?'
+}
+
+const GREETING_SHORT: Record<'ru' | 'kk' | 'en', string> = {
+    ru: 'Здравствуйте! Чем могу Вам помочь?',
+    kk: 'Сәлеметсіз бе! Сізге қалай көмектесе аламын?',
+    en: 'Hello! How can I help you?'
+}
+
+const GREETING_NAMED: Record<'ru' | 'kk' | 'en', (name: string) => string> = {
+    ru: (name) => `Здравствуйте, ${name}! Чем могу Вам помочь?`,
+    kk: (name) => `Сәлеметсіз бе, ${name}! Сізге қалай көмектесе аламын?`,
+    en: (name) => `Hello, ${name}! How can I help you?`
+}
+
+const NAME_ACKNOWLEDGE: Record<'ru' | 'kk' | 'en', (name: string) => string> = {
+    ru: (name) => `Приятно познакомиться, ${name}! Чем я могу Вам помочь?`,
+    kk: (name) => `Сізбен танысқаныма қуаныштымын, ${name}! Сізге қалай көмектесе аламын?`,
+    en: (name) => `Nice to meet you, ${name}! How can I help you?`
+}
+
+export interface GreetingContext {
+    name?: string | null
+    isFirstMessage?: boolean
+}
+
+/**
+ * Строит ответ для fast-интентов (greeting/goodbye/gratitude/clear_context).
+ * Учитывает: известно ли имя пациента и является ли это первым сообщением в беседе,
+ * чтобы не повторять полное представление клиники на каждом сообщении.
+ */
+export function getFastIntentResponse(
+    type: string,
+    language: 'ru' | 'kk' | 'en',
+    ctx: GreetingContext = {}
+): string | null {
+    const lang = language || 'ru'
+
+    if (type === 'greeting') {
+        if (ctx.name) return GREETING_NAMED[lang](ctx.name)
+        if (ctx.isFirstMessage) return GREETING_FULL[lang]
+        return GREETING_SHORT[lang]
     }
+
+    if (type === 'goodbye') {
+        return ctx.name ? GOODBYE_RESPONSES_NAMED[lang](ctx.name) : GOODBYE_RESPONSES[lang]
+    }
+
+    if (type === 'gratitude') {
+        return ctx.name ? GRATITUDE_RESPONSES_NAMED[lang](ctx.name) : GRATITUDE_RESPONSES[lang]
+    }
+
+    if (type === 'clear_context') {
+        return CLEAR_CONTEXT_RESPONSES[lang]
+    }
+
     return null
 }
 
-const INTENT_CLASSIFICATION_PROMPT = `Ты — классификатор намерений пользователя для клиники репродукции IRM.
-Проанализируй сообщение пользователя и верни ТОЛЬКО ОДИН интент из списка ниже в формате JSON.
+export function getNameAcknowledgeResponse(name: string, language: 'ru' | 'kk' | 'en'): string {
+    return NAME_ACKNOWLEDGE[language || 'ru'](name)
+}
+
+function buildClassificationPrompt(lastBotMessage?: string | null): string {
+    let prompt = `Ты — классификатор намерений пользователя для клиники репродукции IRM.
+Проанализируй сообщение пользователя и верни ТОЛЬКО ОДИН интент из списка ниже в формате JSON: {"intent": "..."}.
 
 Возможные интенты:
 - "greeting": приветствия (здравствуйте, привет, hello, сәлем и т.д.)
 - "goodbye": прощания (пока, до свидания, сау бол)
 - "gratitude": благодарность (спасибо, рахмет, thanks)
 - "clear_context": явная просьба забыть диалог (очисти, забудь, начни сначала)
+- "provide_name": пользователь называет своё имя в ответ на вопрос бота "как я могу к Вам обращаться" (обычно короткое сообщение из 1-2 слов, похожее на имя)
 - "booking": явное желание записаться на прием к врачу или на процедуру (запишите меня, хочу на прием)
-- "prices": вопрос о стоимости услуг, анализов или процедур (сколько стоит, какая цена, бағасы қанша, price)
+- "prices": вопрос о стоимости услуг, анализов или процедур, ИЛИ ответ на уточняющий вопрос бота о филиале/гражданстве, заданный в рамках обсуждения цен
 - "objection": возражение, сомнение (слишком дорого, я подумаю, перезвоню позже, в другой клинике дешевле)
-- "query": любые другие информационные вопросы (расписание, какие врачи есть, как проходит ЭКО, где вы находитесь)
+- "query": любые другие информационные вопросы (расписание, какие врачи есть, как проходит ЭКО)
 
-Определяй интент строго по сути сообщения. Если человек просто пишет "цена", это prices. Если пишет "запись", это booking.
-`
+КРИТИЧЕСКИ ВАЖНО — правило продолжения диалога:
+Если "Последнее сообщение бота" ниже — это вопрос (просьба уточнить филиал, гражданство, ФИО, телефон и т.п.),
+а сообщение пользователя — короткий ответ на этот конкретный вопрос (название города/филиала, слово "РК"/"иностранный",
+имя человека и т.п.) — классифицируй по теме вопроса бота, а НЕ как "query". Короткие ответы почти никогда не "query".
 
-export async function detectIntentLLM(query: string): Promise<IntentResult> {
+Примеры:
+- Бот: "Пожалуйста, уточните филиал клиники" / Пользователь: "Алматы" → intent: "prices"
+- Бот: "Уточните ваше гражданство" / Пользователь: "РК" → intent: "prices"
+- Бот: "Как я могу к Вам обращаться?" / Пользователь: "Артём" → intent: "provide_name"`
+
+    if (lastBotMessage) {
+        prompt += `\n\nПоследнее сообщение бота: ${lastBotMessage}`
+    } else {
+        prompt += `\n\nЭто первое сообщение в диалоге (контекста нет).`
+    }
+
+    return prompt
+}
+
+const VALID_TYPES = [
+    'greeting',
+    'goodbye',
+    'gratitude',
+    'clear_context',
+    'objection',
+    'query',
+    'booking',
+    'prices',
+    'provide_name'
+]
+
+export async function detectIntentLLM(query: string, lastBotMessage?: string | null): Promise<IntentResult> {
     try {
         const result = await chat(
             [
-                { role: 'system', content: INTENT_CLASSIFICATION_PROMPT },
+                { role: 'system', content: buildClassificationPrompt(lastBotMessage) },
                 { role: 'user', content: query }
             ],
             {
-                model: 'openai/gpt-4o-mini', // Используем быструю и дешевую модель для роутинга
+                model: 'openai/gpt-4o-mini',
                 temperature: 0,
                 max_tokens: 50,
                 response_format: { type: 'json_object' }
@@ -68,18 +173,7 @@ export async function detectIntentLLM(query: string): Promise<IntentResult> {
         const parsed = JSON.parse(result.content)
         const type = parsed.intent || parsed.type || 'query'
 
-        const validTypes = [
-            'greeting',
-            'goodbye',
-            'gratitude',
-            'clear_context',
-            'objection',
-            'query',
-            'booking',
-            'prices'
-        ]
-
-        if (validTypes.includes(type)) {
+        if (VALID_TYPES.includes(type)) {
             return { type: type as IntentResult['type'] }
         }
 

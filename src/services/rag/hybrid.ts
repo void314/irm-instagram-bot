@@ -24,7 +24,7 @@ export async function hybridSearch(query: string, embedding?: number[]): Promise
         ? sql`, 1 - (c.embedding <=> ${sql.raw(`'[${embedding.join(',')}]'::vector`)}) AS vector_score`
         : sql`, 0 AS vector_score`
 
-    const scoreExpr = embedding ? sql`(0.5 * vector_score + 0.5 * bm25_score) AS score` : sql`bm25_score AS score`
+    const scoreExpr = embedding ? sql`(0.5 * vector_score + 0.5 * bm25_score)` : sql`bm25_score`
 
     const vectorFilter = embedding ? sql`OR vector_score > 0.1` : sql``
 

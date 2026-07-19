@@ -1,15 +1,50 @@
 import { log } from '../../services/logger'
-import { getFastIntentResponse } from '../../services/rag/intent'
+import { getFastIntentResponse, getNameAcknowledgeResponse } from '../../services/rag/intent'
 import { type PatientInfo, getPatient, updatePatient } from '../../services/rag/patient'
+
+/**
+ * Простая валидация "похоже ли это на имя", а не классификация интента.
+ * Сама классификация (что пользователь отвечает на вопрос об имени) уже сделана LLM
+ * в detectIntentLLM — здесь только санити-чек значения перед сохранением в БД.
+ */
+function extractNameCandidate(text: string): string | null {
+    const trimmed = text.trim()
+    if (trimmed.length < 2 || trimmed.length > 40) return null
+    if (/[0-9@#{}[\]<>/\\]/.test(trimmed)) return null
+    if (/[?!]/.test(trimmed)) return null
+
+    const words = trimmed.split(/\s+/).filter(Boolean)
+    if (words.length === 0 || words.length > 3) return null
+
+    return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
+}
 
 export async function handleConversationIntent(
     query: string,
     detectedLang: 'ru' | 'kk' | 'en',
     senderId: string,
     conversationId: bigint,
-    intentType: string
+    intentType: string,
+    isFirstMessage = false
 ): Promise<{ answer: string; intent: string } | null> {
-    const responseText = getFastIntentResponse(intentType, detectedLang)
+    const patient = await getPatient(senderId)
+
+    // Пользователь ответил на вопрос "как я могу к Вам обращаться?"
+    if (intentType === 'provide_name') {
+        const nameCandidate = extractNameCandidate(query)
+        if (!nameCandidate) {
+            // Не похоже на имя — пусть падает дальше в RAG/другие ветки, а не форсим сохранение мусора
+            return null
+        }
+
+        await updatePatient(senderId, { name: nameCandidate, nameSource: 'user', nameChangeOffered: true })
+        log.info({ module: 'agent:conversation', senderId, intent: 'provide_name' }, 'Patient name saved')
+
+        return { answer: getNameAcknowledgeResponse(nameCandidate, detectedLang), intent: 'provide_name' }
+    }
+
+    const displayName = getDisplayName(patient)
+    const responseText = getFastIntentResponse(intentType, detectedLang, { name: displayName, isFirstMessage })
     if (!responseText) {
         return null
     }
@@ -17,9 +52,6 @@ export async function handleConversationIntent(
     log.info({ module: 'agent:conversation', intent: intentType }, 'Handling conversation intent')
 
     let answer = responseText
-    const patient = await getPatient(senderId)
-
-    answer = personalizeAnswer(answer, patient)
 
     if (intentType === 'greeting') {
         answer = await appendNameQuestion(answer, patient, senderId)
@@ -52,6 +84,13 @@ function getDisplayName(patient: PatientInfo | null): string | null {
     return null
 }
 
+/**
+ * Используется для персонализации ответов RAG/objection/prices — там, где имя
+ * добавляется префиксом перед содержательным ответом. Для conversation-интентов
+ * (greeting/goodbye/gratitude) имя уже встроено в сам шаблон ответа естественным
+ * образом (см. getFastIntentResponse), поэтому здесь НЕ используется, чтобы избежать
+ * дублирования вида "Артём, Здравствуйте, Артём!".
+ */
 export function personalizeAnswer(answer: string, patient: PatientInfo | null): string {
     const displayName = getDisplayName(patient)
     if (!displayName) return answer
