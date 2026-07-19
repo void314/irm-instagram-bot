@@ -2,11 +2,11 @@ import { status } from 'elysia'
 
 import { eq } from 'drizzle-orm'
 
+import { runPipeline } from '../../../agents/orchestrator'
 import { env } from '../../../config/constants'
 import { db } from '../../../db/client'
 import { accounts, conversations, messages } from '../../../db/schema'
 import { log } from '../../../services/logger'
-import { runPipeline } from '../../../services/rag/orchestrator'
 import { ensurePatient, fetchInstagramUserInfo, updatePatient } from '../../../services/rag/patient'
 import { TokenService } from '../../tokens'
 import type {

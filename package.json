@@ -23,6 +23,7 @@
         "elysia": "1.4.29",
         "elysia-rate-limit": "^4.6.2",
         "facebook-nodejs-business-sdk": "^24.0.1",
+        "franc-min": "^6.2.0",
         "ioredis": "^5.11.1",
         "postgres": "^3.4.9",
         "valibot": "^1.4.2",

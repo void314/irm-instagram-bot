@@ -1,18 +1,14 @@
-const KAZAKH_CHARS = /[ңғқәіұүөһҢҒҚӘІҰҮӨҺ]/
-const CYRILLIC = /[а-яёА-ЯЁ]/
-const LATIN = /[a-zA-Z]/
+import { franc } from 'franc-min'
 
 export function detectLanguage(text: string): 'ru' | 'kk' | 'en' {
     const trimmed = text.trim()
     if (!trimmed) return 'ru'
 
-    if (KAZAKH_CHARS.test(trimmed)) return 'kk'
+    const detected = franc(trimmed, { minLength: 3 })
 
-    const cyrillicCount = (trimmed.match(CYRILLIC) || []).length
-    const latinCount = (trimmed.match(LATIN) || []).length
+    if (detected === 'kaz') return 'kk'
+    if (detected === 'rus') return 'ru'
 
-    if (cyrillicCount > latinCount) return 'ru'
-    if (latinCount > cyrillicCount) return 'en'
-
-    return 'ru'
+    // franc-min returns 'eng' for English. If it's undefined ('und') or anything else, default to en
+    return 'en'
 }

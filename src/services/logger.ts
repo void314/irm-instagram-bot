@@ -4,7 +4,7 @@ import pino from 'pino'
 
 import { env } from '../config/constants'
 
-const level = env.NODE_ENV === 'development' ? 'info' : 'error'
+const level = env.NODE_ENV === 'development' ? 'debug' : 'info'
 
 export const log = createPinoLogger({
     level,

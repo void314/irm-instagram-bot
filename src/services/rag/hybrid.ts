@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm'
 import { env } from '../../config/constants'
 import { isLearningEnabled } from '../../config/learning'
 import { db } from '../../db/client'
+import { detectLanguage } from './language'
 
 export interface HybridSearchResult {
     chunkId: bigint
@@ -17,6 +18,8 @@ export interface HybridSearchResult {
 export async function hybridSearch(query: string, embedding?: number[]): Promise<HybridSearchResult[]> {
     const topK = env.RAG_TOP_K
 
+    const language = detectLanguage(query)
+
     const vectorColumn = embedding
         ? sql`, 1 - (c.embedding <=> ${sql.raw(`'[${embedding.join(',')}]'::vector`)}) AS vector_score`
         : sql`, 0 AS vector_score`
@@ -24,6 +27,8 @@ export async function hybridSearch(query: string, embedding?: number[]): Promise
     const scoreExpr = embedding ? sql`(0.5 * vector_score + 0.5 * bm25_score) AS score` : sql`bm25_score AS score`
 
     const vectorFilter = embedding ? sql`OR vector_score > 0.1` : sql``
+
+    const tsConfig = language === 'ru' ? 'russian' : 'simple'
 
     // RAG Store search (weight 1.0)
     const ragResults = await db.execute<{
@@ -42,7 +47,7 @@ export async function hybridSearch(query: string, embedding?: number[]): Promise
                     c.document_id,
                     c.text
                     ${vectorColumn},
-                    COALESCE(ts_rank(c.tsv, plainto_tsquery('russian', ${query})), 0) AS bm25_score,
+                    COALESCE(ts_rank(c.tsv, plainto_tsquery(${tsConfig}, ${query})), 0) AS bm25_score,
                     c.metadata
                 FROM chunks c
                 WHERE c.embedding IS NOT NULL
@@ -80,7 +85,7 @@ export async function hybridSearch(query: string, embedding?: number[]): Promise
                     c.document_id,
                     c.text
                     ${vectorColumn},
-                    COALESCE(ts_rank(c.tsv, plainto_tsquery('russian', ${query})), 0) AS bm25_score,
+                    COALESCE(ts_rank(c.tsv, plainto_tsquery(${tsConfig}, ${query})), 0) AS bm25_score,
                     c.metadata
                 FROM learn_chunks c
                 WHERE c.embedding IS NOT NULL

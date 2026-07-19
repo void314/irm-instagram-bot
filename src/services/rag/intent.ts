@@ -1,92 +1,91 @@
-const GREETINGS = [
-    /^(привет|здравствуй(те)?|добр(ый|рое|рый)\s*(утро|день|вечер)|hello|hi|hey|салют|хай|здарова|ку)$/i,
-    /^(доброго\s*(времени\s*)?суток|рад\s*видеть|howdy|yo|good\s*(morning|afternoon|evening|day))/i,
-    /^(сәлем|сәлеметсіз\s*бе|ассалаумағалейкүм|сау\s*мысыз|қайырлы\s*(таң|күн|кеш))/i
-]
-
-const SMALL_TALK = [
-    /^(привет|здравствуй(те)?|hello|hi|hey|салем|салют|хай)\s*[,!.\s]+\s*(как\s*(дела|жизнь|настроение|ты|вы)|что\s*(делаешь|нового|слышно)|чё\s*как)/i,
-    /^(сәлем|сәлеметсіз\s*бе)\s*[,!.\s]+\s*(қалың\s*қалай|жағдай\s*қалай|не\s*жаңалық|қалайсыз)/i
-]
-
-const GOODBYES = [
-    /^(пока|до\s*свидания|до\s*встречи|всего\s*доброго|bye|goodbye|bb|бай|увидимся|чао|до\s*связи)/i,
-    /^(хорошего\s*дня|удачи|всех\s*благ|see\s*you|later|g2g)/i,
-    /^(сау\s*бол(ыңыз)?|көріскенше|кездескенше|қош\s*бол(ыңыз)?|айырлыс|рахмет\s*сау\s*бол)/i
-]
-
-const GRATITUDE = [
-    /^(спасибо|благодарю|рахмет|thank\s*you|thanks|thx|ty|merci|gracias|сен\s*рақмет)/i,
-    /^(большое\s*спасибо|огромное\s*спасибо|thank\s*you\s*very\s*much|much\s*appreciated)/i,
-    /^(көп\s*рақмет|үлкен\s*рақмет|алғысым\s*шексіз|ризамын)/i
-]
-
-const CLEAR_CONTEXT = [
-    /^(очисти|забудь|забыть|сброс|clear|forget|reset|стоп|отмена|нач(ни|и)\s*(заново|сначала))/i
-]
+import { chat } from '../llm/openrouter'
 
 export interface IntentResult {
-    type: 'greeting' | 'goodbye' | 'gratitude' | 'clear_context' | 'objection' | 'query'
-    response?: string
+    type: 'greeting' | 'goodbye' | 'gratitude' | 'clear_context' | 'objection' | 'query' | 'booking' | 'prices'
 }
 
-const RESPONSES: Record<string, { ru: string; kk: string }> = {
+const RESPONSES: Record<string, { ru: string; kk: string; en: string }> = {
     greeting: {
         ru: 'Здравствуйте! IRM Clinic, консультант Айгерим. Чем я могу Вам помочь?',
-        kk: 'Сәлеметсіз бе! IRM Clinic, консультант Айгерим. Сізге қалай көмектесе аламын?'
+        kk: 'Сәлеметсіз бе! IRM Clinic, консультант Айгерим. Сізге қалай көмектесе аламын?',
+        en: 'Hello! IRM Clinic, consultant Aigerim. How can I help you?'
     },
     goodbye: {
         ru: 'До свидания! Благодарим за обращение в IRM Clinic. Всего доброго!',
-        kk: 'Сау болыңыз! IRM Clinic-ке хабарласқаныңызға рахмет. Тек жақсылық тілейміз!'
+        kk: 'Сау болыңыз! IRM Clinic-ке хабарласқаныңызға рахмет. Тек жақсылық тілейміз!',
+        en: 'Goodbye! Thank you for contacting IRM Clinic. All the best!'
     },
     gratitude: {
         ru: 'Пожалуйста! Если у Вас будут вопросы — обращайтесь в IRM Clinic.',
-        kk: 'Оқасы жоқ! Сұрақтарыңыз болса, IRM Clinic-ке хабарласыңыз.'
+        kk: 'Оқасы жоқ! Сұрақтарыңыз болса, IRM Clinic-ке хабарласыңыз.',
+        en: "You're welcome! If you have any questions, please contact IRM Clinic."
     },
     clear_context: {
         ru: 'Диалог очищен. Чем я могу Вам помочь?',
-        kk: 'Диалог тазартылды. Сізге қалай көмектесе аламын?'
+        kk: 'Диалог тазартылды. Сізге қалай көмектесе аламын?',
+        en: 'Dialog cleared. How can I help you?'
     }
 }
 
-export function detectFastIntent(text: string, language?: 'ru' | 'kk' | 'en'): IntentResult | null {
-    const trimmed = text.trim()
-    const lang = language ?? 'ru'
-
-    for (const pattern of SMALL_TALK) {
-        if (pattern.test(trimmed)) {
-            const response = lang === 'kk' ? RESPONSES.greeting.kk : RESPONSES.greeting.ru
-            return { type: 'greeting', response }
-        }
+export function getFastIntentResponse(type: string, language: 'ru' | 'kk' | 'en'): string | null {
+    if (RESPONSES[type]) {
+        return RESPONSES[type][language] || RESPONSES[type]['ru']
     }
-
-    for (const pattern of GREETINGS) {
-        if (pattern.test(trimmed)) {
-            const response = lang === 'kk' ? RESPONSES.greeting.kk : RESPONSES.greeting.ru
-            return { type: 'greeting', response }
-        }
-    }
-
-    for (const pattern of GOODBYES) {
-        if (pattern.test(trimmed)) {
-            const response = lang === 'kk' ? RESPONSES.goodbye.kk : RESPONSES.goodbye.ru
-            return { type: 'goodbye', response }
-        }
-    }
-
-    for (const pattern of GRATITUDE) {
-        if (pattern.test(trimmed)) {
-            const response = lang === 'kk' ? RESPONSES.gratitude.kk : RESPONSES.gratitude.ru
-            return { type: 'gratitude', response }
-        }
-    }
-
-    for (const pattern of CLEAR_CONTEXT) {
-        if (pattern.test(trimmed)) {
-            const response = lang === 'kk' ? RESPONSES.clear_context.kk : RESPONSES.clear_context.ru
-            return { type: 'clear_context', response }
-        }
-    }
-
     return null
+}
+
+const INTENT_CLASSIFICATION_PROMPT = `Ты — классификатор намерений пользователя для клиники репродукции IRM.
+Проанализируй сообщение пользователя и верни ТОЛЬКО ОДИН интент из списка ниже в формате JSON.
+
+Возможные интенты:
+- "greeting": приветствия (здравствуйте, привет, hello, сәлем и т.д.)
+- "goodbye": прощания (пока, до свидания, сау бол)
+- "gratitude": благодарность (спасибо, рахмет, thanks)
+- "clear_context": явная просьба забыть диалог (очисти, забудь, начни сначала)
+- "booking": явное желание записаться на прием к врачу или на процедуру (запишите меня, хочу на прием)
+- "prices": вопрос о стоимости услуг, анализов или процедур (сколько стоит, какая цена, бағасы қанша, price)
+- "objection": возражение, сомнение (слишком дорого, я подумаю, перезвоню позже, в другой клинике дешевле)
+- "query": любые другие информационные вопросы (расписание, какие врачи есть, как проходит ЭКО, где вы находитесь)
+
+Определяй интент строго по сути сообщения. Если человек просто пишет "цена", это prices. Если пишет "запись", это booking.
+`
+
+export async function detectIntentLLM(query: string): Promise<IntentResult> {
+    try {
+        const result = await chat(
+            [
+                { role: 'system', content: INTENT_CLASSIFICATION_PROMPT },
+                { role: 'user', content: query }
+            ],
+            {
+                model: 'openai/gpt-4o-mini', // Используем быструю и дешевую модель для роутинга
+                temperature: 0,
+                max_tokens: 50,
+                response_format: { type: 'json_object' }
+            }
+        )
+
+        const parsed = JSON.parse(result.content)
+        const type = parsed.intent || parsed.type || 'query'
+
+        const validTypes = [
+            'greeting',
+            'goodbye',
+            'gratitude',
+            'clear_context',
+            'objection',
+            'query',
+            'booking',
+            'prices'
+        ]
+
+        if (validTypes.includes(type)) {
+            return { type: type as IntentResult['type'] }
+        }
+
+        return { type: 'query' }
+    } catch (e) {
+        console.error('LLM Intent detection failed:', e)
+        return { type: 'query' }
+    }
 }

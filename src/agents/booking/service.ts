@@ -5,13 +5,12 @@ import { type PatientInfo, getPatient, updatePatient } from '../../services/rag/
 import { executeTool } from '../../services/tools'
 import { getToolDefinitions } from '../../services/tools'
 
-const BOOKING_INTENT_RE = /(запис|записа|прием|приём|консультац)/i
-
-export function isBookingIntent(text: string): boolean {
-    return BOOKING_INTENT_RE.test(text)
-}
-
-export async function handleBookingIntent(query: string, senderId: string, history: string): Promise<string> {
+export async function handleBookingIntent(
+    query: string,
+    senderId: string,
+    history: string,
+    lang: 'ru' | 'kk' | 'en' = 'ru'
+): Promise<string> {
     log.info({ module: 'booking' }, 'Handling booking intent')
 
     let patient = await getPatient(senderId)
@@ -25,7 +24,9 @@ export async function handleBookingIntent(query: string, senderId: string, histo
 Если пользователь называет врача, используй инструмент find_doctor.
 Если все данные собраны, ответь финальной фразой подтверждения записи: "Вы успешно записаны! (Тестовый режим)"
 Филиалы клиники: ${getBranchesList()}
-`
+
+ВАЖНО: Итоговый ответ пользователю сформируй строго на языке: ${lang === 'kk' ? 'казахском' : lang === 'en' ? 'английском' : 'русском'}.`
+
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }]
 
     if (history && history !== 'нет') {
@@ -39,7 +40,7 @@ export async function handleBookingIntent(query: string, senderId: string, histo
     let finalAnswer = first.content
 
     if (first.toolCalls && first.toolCalls.length > 0) {
-        messages.push({ role: 'assistant', content: first.content, tool_calls: first.toolCalls })
+        messages.push({ role: 'assistant', content: first.content || '', tool_calls: first.toolCalls })
 
         for (const tc of first.toolCalls) {
             try {
@@ -51,13 +52,13 @@ export async function handleBookingIntent(query: string, senderId: string, histo
         }
 
         const second = await chat(messages)
-        finalAnswer = second.content
+        finalAnswer = second.content || finalAnswer
     }
 
-    if (finalAnswer.includes('Тестовый режим')) {
+    if (finalAnswer && finalAnswer.includes('Тестовый режим')) {
         await updatePatient(senderId, { hasBookedConsultation: true })
         log.info({ module: 'booking', senderId }, 'Booking completed in emulation mode')
     }
 
-    return finalAnswer
+    return finalAnswer || 'Произошла ошибка при записи. Попробуйте еще раз.'
 }

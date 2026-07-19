@@ -1,4 +1,5 @@
 import { chat } from '../llm/openrouter'
+import { log } from '../logger'
 import { SYSTEM_PROMPT_CLARIFICATION } from './prompts'
 
 // Маркеры неуверенности модели на всех трёх языках интерфейса (ru/kk/en).
@@ -51,6 +52,7 @@ export async function checkGrounding(
     query: string
 ): Promise<GroundingResult> {
     if (chunks.length === 0) {
+        log.debug({ module: 'grounding', reason: 'no_chunks' }, 'Grounding: pass (no chunks to check)')
         return { passed: true, needsClarification: false }
     }
 
@@ -63,8 +65,23 @@ export async function checkGrounding(
     // Теперь низкий score — самостоятельное, детерминированное основание для уточнения;
     // фразы-маркеры остаются как дополнительный (не единственный) сигнал.
     if (maxScore >= SCORE_THRESHOLD && !containsAmbiguity(answer)) {
+        log.debug(
+            { module: 'grounding', maxScore: maxScore.toFixed(3), threshold: SCORE_THRESHOLD },
+            'Grounding: passed (score OK, no ambiguity)'
+        )
         return { passed: true, needsClarification: false }
     }
+
+    log.info(
+        {
+            module: 'grounding',
+            maxScore: maxScore.toFixed(3),
+            threshold: SCORE_THRESHOLD,
+            hasAmbiguity: containsAmbiguity(answer),
+            answerPreview: answer.slice(0, 100)
+        },
+        'Grounding: failed — requesting clarification'
+    )
 
     return {
         passed: false,

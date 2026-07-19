@@ -3,12 +3,12 @@ import Elysia, { status } from 'elysia'
 import { eq, sql } from 'drizzle-orm'
 
 import * as models from './model'
+import { type RagContext, runPipeline } from '../../agents/orchestrator'
 import { env } from '../../config/constants'
 import { db } from '../../db/client'
 import { chunks, conversations, documents } from '../../db/schema'
 import { embedBatch } from '../../services/llm/openrouter'
 import { chunkText } from '../../services/rag/chunker'
-import { type RagContext, runPipeline } from '../../services/rag/orchestrator'
 
 export const ragController = new Elysia({
     name: 'module.rag',

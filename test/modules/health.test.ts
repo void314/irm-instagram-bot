@@ -6,7 +6,13 @@ describe('Health Module', () => {
     it('should return 200 and online status', async () => {
         // ! Мы тестируем именно app (который экспортируется из app.ts без запуска сервера)
         // ! Это лучшая практика Elysia — вызов .handle(new Request())
-        const response = await app.handle(new Request('http://localhost/api/health'))
+        const response = await app.handle(
+            new Request('http://localhost/api/health', {
+                headers: {
+                    'x-forwarded-for': '127.0.0.1'
+                }
+            })
+        )
         const body = await response.json()
 
         expect(response.status).toBe(200)
@@ -15,7 +21,13 @@ describe('Health Module', () => {
 
     // Пример теста на 404
     it('should return 404 for unknown route', async () => {
-        const response = await app.handle(new Request('http://localhost/api/unknown'))
+        const response = await app.handle(
+            new Request('http://localhost/api/unknown', {
+                headers: {
+                    'x-forwarded-for': '127.0.0.1'
+                }
+            })
+        )
         expect(response.status).toBe(404)
     })
 })

@@ -1,80 +1,98 @@
 # IRM Instagram AI Assistant
 
-Сервис ИИ-ассистента для Instagram Direct клиники IRM. Обрабатывает входящие сообщения, отвечает на вопросы пациентов, использует RAG на базе клинических документов и интегрируется с внешними сервисами клиники (цены, врачи, расписание).
+Мультиагентный ИИ-ассистент для клиники репродукции IRM.
+Сервис обрабатывает входящие сообщения из Instagram Direct, отвечает на вопросы пациентов, помогает с записью на прием и отрабатывает возражения. Работает на базе RAG (Retrieval-Augmented Generation) с использованием клинических документов и напрямую интегрируется с учетной системой клиники (1С/внешнее API) для получения актуальных цен, расписания и списка врачей.
 
-## Основные возможности
+## 🚀 Основные возможности и Архитектура (Оркестратор)
 
-- Прием и обработка входящих Instagram сообщений через Facebook Login и Instagram Graph API
-- Контекстные ответы на базе RAG (документы и чанки в Postgres + pgvector)
-- Интеграции с внешним API клиники (цены, врачи, расписание)
-- Валидация и контроль конфигурации через типобезопасный env
+В основе проекта лежит паттерн **Оркестратора (`src/agents/orchestrator/index.ts`)**, который маршрутизирует запросы между специализированными агентами. Это позволяет системе работать быстро, предсказуемо и экономично:
 
-## Стек
+1.  **Диалоговый агент (Conversation Agent)**
+    *   Быстрая обработка Small Talk (приветствия, прощания, благодарности).
+    *   Работает **без использования LLM** на базе регулярных выражений, обеспечивая мгновенный ответ на рутинные фразы.
+2.  **Агент бронирования (Booking Agent)**
+    *   Активируется при обнаружении интента на запись (слова "запись", "прием" и т.д.).
+    *   Собирает необходимые данные (ФИО, телефон, врач, время, филиал) с помощью LLM (поддерживает `tool_calls` для поиска врачей и цен).
+3.  **Агент работы с возражениями (Objection Agent)**
+    *   LLM-классификатор выявляет сомнения пациента ("слишком дорого", "я подумаю").
+    *   При обнаружении возражения включается специальный промпт для мягкой и профессиональной отработки по скриптам клиники.
+4.  **Информационный агент (RAG Agent)**
+    *   Обрабатывает вопросы по услугам, процедурам ЭКО и анализам.
+    *   Использует **Гибридный поиск (Hybrid Search)**: комбинация векторного поиска (на базе `pgvector`) и полнотекстового поиска (BM25) с автоматическим определением языка (RU/KK/EN).
+5.  **Инструментальный агент (Tool Agent)**
+    *   Позволяет LLM делать запросы к внешнему API клиники (`rk.etl.uzun.kz`) для получения точных цен, списка врачей и доступного расписания.
 
-- Runtime: Bun
-- Framework: Elysia
-- Database: PostgreSQL + pgvector
-- ORM: Drizzle
-- Validation: valibot + valibot-env
-- LLM + embeddings: OpenRouter
-- Facebook SDK: https://github.com/facebook/facebook-nodejs-business-sdk
+*💡 **Мультимодельность:** Система спроектирована так, что каждый агент может использовать свою собственную LLM модель (например, дешевую и быструю `gpt-4o-mini` для классификации возражений и мощную `claude-3.5-sonnet` для медицинского RAG). Настраивается в вызовах функции `chat` в `src/services/llm/openrouter.ts`.*
 
-## Быстрый старт
+## 🛠 Технологический стек
 
-1. Установите зависимости: `bun install`
-2. Поднимите Postgres с pgvector: `docker-compose up -d`
-3. Скопируйте `.env.example` в `.env` и заполните значения
-4. Примените миграции: `bun run db:migrate`
-5. Запустите сервис: `bun run dev`
+-   **Runtime:** [Bun](https://bun.sh/) (сверхбыстрая среда выполнения и пакетный менеджер)
+-   **Framework:** [ElysiaJS](https://elysiajs.com/) (производительный веб-фреймворк)
+-   **Database:** PostgreSQL + расширение `pgvector`
+-   **ORM:** [Drizzle ORM](https://orm.drizzle.team/)
+-   **Validation:** [Valibot](https://valibot.dev/) + `valibot-env` (типобезопасная конфигурация)
+-   **LLM Provider:** [OpenRouter](https://openrouter.ai/)
+-   **Meta Integration:** Instagram Graph API, Facebook Webhooks (через `facebook-nodejs-business-sdk`)
 
-После запуска:
+## 📦 Быстрый старт
 
-- API: `http://localhost:3032/api`
-- Healthcheck: `http://localhost:3032/api/health`
-- OpenAPI (Swagger UI): `http://localhost:3032/docs`
+1.  **Установите зависимости:**
+    ```bash
+    bun install
+    ```
+2.  **Поднимите инфраструктуру (Postgres с pgvector и Redis):**
+    ```bash
+    docker-compose up -d
+    ```
+    *(Убедитесь, что Docker запущен. БД необходима для работы Drizzle, а Redis для системы очередей BullMQ и Rate Limiter'а)*
+3.  **Настройте окружение:**
+    Скопируйте `.env.example` в `.env` и заполните ключи API (база данных, OpenRouter, Meta).
+4.  **Примените миграции базы данных:**
+    ```bash
+    bun run db:migrate
+    ```
+5.  **Запустите сервис в режиме разработки:**
+    ```bash
+    bun run dev
+    ```
 
-Порт по умолчанию — `3032`.
+После запуска сервис будет доступен по адресу `http://localhost:3032`.
 
-## Переменные окружения
+### Полезные эндпоинты:
+-   `GET /api/health` — проверка состояния (Healthcheck)
+-   `GET /docs` — Swagger UI (OpenAPI документация)
 
-Полный список смотрите в `.env.example`. Ключевые группы:
+## 🗂 Структура проекта
 
-- Database: `DATABASE_URL`
-- Server: `PORT`, `NODE_ENV`
-- Rate Limit: `RATE_LIMIT_MAX_REQUESTS`, `RATE_LIMIT_WINDOW`
-- Meta/Facebook: `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_GRAPH_API_VERSION`, `FACEBOOK_PAGE_ID`
-- Instagram: `INSTAGRAM_BUSINESS_ID`
-- Webhook: `WEBHOOK_VERIFY_TOKEN`, `WEBHOOK_AUTO_REPLY_TEXT`
-- Token Encryption: `TOKEN_ENCRYPTION_KEY`
-- RAG/LLM: `OPENROUTER_BASE_URL`, `OPENROUTER_API_KEY`, `LLM_MODEL`, `EMBED_MODEL`, `RAG_TOP_K`
-- External API: `EXTERNAL_API_BASE_URL`
+```text
+irm-instagram-bot/
+├── src/
+│   ├── agents/          # Логика агентов (Оркестратор, RAG, Booking, Objection)
+│   ├── modules/         # API Контроллеры (Instagram, Webhook, Auth, Health, Admin)
+│   ├── services/        # Ядро бизнес-логики:
+│   │   ├── llm/         # Интеграция с OpenRouter
+│   │   ├── rag/         # Инструменты RAG: поиск, гибридный поиск, чанкер, промпты
+│   │   └── tools/       # Интеграции с внешними API клиники (Schedule, Prices, Doctors)
+│   ├── db/              # Схема базы данных Drizzle и миграции
+│   ├── config/          # Конфигурация (constants.ts)
+│   ├── plugins/         # Elysia плагины (обработка ошибок)
+│   ├── app.ts           # Настройка сервера Elysia
+│   └── index.ts         # Точка входа
+├── test/                # Юнит и интеграционные тесты (bun:test)
+├── docs/                # Техническая документация и отчеты об аудите
+└── docker-compose.yml   # Контейнеры для локальной разработки (PG + Redis)
+```
 
-## Скрипты
+## 📜 Доступные скрипты (`package.json`)
 
-- `bun run dev` — запуск в watch-режиме (`src/index.ts`)
-- `bun test` — тесты (`bun:test`)
-- `bun run format` — форматирование Prettier
-- `bun run db:generate` — генерация миграций Drizzle
-- `bun run db:migrate` — применение миграций
-- `bun run db:studio` — визуальная работа с БД
+-   `bun run dev` — запуск сервера с горячей перезагрузкой (watch).
+-   `bun test` — запуск автотестов.
+-   `bun run format` — форматирование кода с помощью Prettier.
+-   `bun run db:generate` — генерация новых SQL-миграций при изменении `src/db/schema.ts`.
+-   `bun run db:migrate` — применение миграций к базе данных.
+-   `bun run db:studio` — запуск Drizzle Studio для удобного просмотра и редактирования БД в браузере.
 
-## Структура проекта
-
-- `src/index.ts` — точка входа
-- `src/app.ts` — подключение плагинов и глобальных middleware
-- `src/router.ts` — общий роутер с префиксом `/api`
-- `src/modules/*` — бизнес-модули (auth, instagram, webhook, rag, services, tokens, admin)
-- `src/services/*` — LLM, RAG и tool-функции
-- `src/db/*` — schema + миграции Drizzle
-- `docker/` — init-скрипты для Postgres
-- `docs/` — технические заметки
-
-## Безопасность
-
-- Не логируйте сообщения пациентов и любые PII без необходимости.
-- Не храните токены в открытом виде — используйте шифрование.
-
-## Документация
-
-- `docs/` — детали интеграции и справочные материалы
-
+## 🔒 Политика безопасности
+-   **Patient Data:** PII (Personal Identifiable Information) и медицинские данные пациентов не логируются в открытом виде.
+-   **Токены:** Все токены Meta зашифрованы алгоритмом AES-256-GCM.
+-   **Валидация Webhook:** Все входящие события от Instagram проходят проверку подписи `hub.verify_token` и `hub.challenge`.

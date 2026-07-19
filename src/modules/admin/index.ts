@@ -2,9 +2,9 @@ import Elysia, { status, t } from 'elysia'
 
 import { count, desc, eq, like, sql } from 'drizzle-orm'
 
+import { runPipeline } from '../../agents/orchestrator'
 import { db } from '../../db/client'
 import { conversations, messages, patients, services } from '../../db/schema'
-import { runPipeline } from '../../services/rag/orchestrator'
 import { findDoctor } from '../../services/tools/doctor-search'
 import { pricesTool } from '../../services/tools/prices'
 import { scheduleTool } from '../../services/tools/schedule'
