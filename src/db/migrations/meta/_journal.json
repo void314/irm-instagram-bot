@@ -50,6 +50,13 @@
             "when": 1784392253441,
             "tag": "0006_mushy_rhino",
             "breakpoints": true
+        },
+        {
+            "idx": 7,
+            "version": "7",
+            "when": 1784447080532,
+            "tag": "0007_amusing_doomsday",
+            "breakpoints": true
         }
     ]
 }

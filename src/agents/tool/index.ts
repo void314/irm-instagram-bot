@@ -69,7 +69,7 @@ export async function handlePriceIntent(
     lang: 'ru' | 'kk' | 'en' = 'ru',
     history?: string
 ): Promise<{ answer: string; missingInfo: boolean; updatedPatient: PatientInfo | null }> {
-    const toolArgs: Record<string, unknown> = { query }
+    const toolArgs: Record<string, unknown> = { query, lang }
     let updatedPatient = patient
 
     // Try to extract citizenship from user response if missing
@@ -93,7 +93,8 @@ export async function handlePriceIntent(
                     preferredBranchRef1cId: null,
                     hasBookedConsultation: false,
                     nameSource: null,
-                    nameChangeOffered: false
+                    nameChangeOffered: false,
+                    bookingNudgeOffered: false
                 }),
                 citizenship: extractedCitizenship
             }

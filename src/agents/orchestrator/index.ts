@@ -6,9 +6,10 @@ import {
     incrementMessageCount,
     updateConversationMetadata
 } from '../../services/rag/context'
-import { detectIntentLLM } from '../../services/rag/intent'
+import { NUDGE_RESPONSES, detectIntentLLM } from '../../services/rag/intent'
 import { detectLanguage } from '../../services/rag/language'
 import {
+    type PatientInfo,
     extractPatientInfoFromDialogue,
     formatPatientContext,
     getPatient,
@@ -19,6 +20,11 @@ import { appendNameQuestion, handleConversationIntent, personalizeAnswer } from 
 import { checkAndHandleObjection } from '../objection'
 import { processRagQuery } from '../rag'
 import { handlePriceIntent } from '../tool'
+
+// Минимальное число сообщений в диалоге (счётчик до текущего хода), после
+// которого можно один раз проактивно предложить запись на консультацию,
+// если пациент ещё не записан и такое предложение ему ещё не делалось.
+const NUDGE_MESSAGE_THRESHOLD = 4
 
 export interface RagContext {
     conversationId: bigint
@@ -42,6 +48,30 @@ export interface RagResponse {
     intent: string
     needsClarification: boolean
     debug?: RagDebug
+}
+
+/**
+ * Проактивно предлагает запись на консультацию, если пациент ещё не записан
+ * и такое предложение ему ещё не делалось в этом диалоге. Срабатывает не
+ * чаще одного раза на пациента (флаг bookingNudgeOffered), чтобы не спамить
+ * этим предложением в каждом сообщении. Не применяется к веткам, где CTA
+ * на запись уже встроен в сам ответ (objection, booking, fast-intents).
+ */
+async function maybeAppendNudge(
+    answer: string,
+    patient: PatientInfo | null,
+    context: RagContext | undefined,
+    messageCount: number,
+    lang: 'ru' | 'kk' | 'en'
+): Promise<string> {
+    if (!context || !patient) return answer
+    if (patient.hasBookedConsultation || patient.bookingNudgeOffered) return answer
+    if (messageCount < NUDGE_MESSAGE_THRESHOLD) return answer
+
+    await updatePatient(context.senderId, { bookingNudgeOffered: true })
+    log.info({ module: 'orchestrator', senderId: context.senderId }, 'Booking nudge appended')
+
+    return `${answer}\n\n${NUDGE_RESPONSES[lang]}`
 }
 
 function buildDialogueForExtraction(query: string, history: string, answer: string): string {
@@ -74,6 +104,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     let convoMetadata = null
     let lastBotMessage: string | null = null
     let effectiveLang: 'ru' | 'kk' | 'en' = 'ru'
+    let messageCount = 0
 
     if (context) {
         const ctx = await getConversationContext(context.conversationId)
@@ -81,6 +112,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         if (ctx.history) history = ctx.history
         convoMetadata = ctx.metadata
         lastBotMessage = getLastBotMessage(history)
+        messageCount = ctx.messageCount
     }
 
     // Determine language: try fresh detection → fallback to metadata → fallback to 'ru'
@@ -210,6 +242,10 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         )
 
         const personalized = personalizeAnswer(answer, updatedPatient)
+        // Примечание: для ценовых ответов CTA на запись уже встроен детерминированно
+        // в сам ответ инструмента (см. BOOKING_CTA в services/tools/prices.ts) —
+        // согласно скрипту колл-центра (format.md), после КАЖДОГО ценового ответа
+        // должно быть предложение записи, а не раз в N сообщений, как в общем RAG.
         const finalAnswer = context
             ? await appendNameQuestion(personalized, updatedPatient, context.senderId)
             : personalized
@@ -245,7 +281,8 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     )
 
     const personalized = personalizeAnswer(answer, patient)
-    const finalAnswer = context ? await appendNameQuestion(personalized, patient, context.senderId) : personalized
+    let finalAnswer = context ? await appendNameQuestion(personalized, patient, context.senderId) : personalized
+    finalAnswer = await maybeAppendNudge(finalAnswer, patient, context, messageCount, effectiveLang)
 
     if (context) {
         await incrementMessageCount(context.conversationId)

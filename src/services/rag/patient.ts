@@ -22,6 +22,7 @@ export interface PatientInfo {
     hasBookedConsultation: boolean
     nameSource: string | null
     nameChangeOffered: boolean
+    bookingNudgeOffered: boolean
 }
 
 export async function getPatient(senderId: string): Promise<PatientInfo | null> {
@@ -46,7 +47,8 @@ export async function getPatient(senderId: string): Promise<PatientInfo | null> 
         preferredBranchRef1cId: row.preferredBranchRef1cId,
         hasBookedConsultation: row.hasBookedConsultation,
         nameSource: row.nameSource,
-        nameChangeOffered: row.nameChangeOffered
+        nameChangeOffered: row.nameChangeOffered,
+        bookingNudgeOffered: row.bookingNudgeOffered
     }
 }
 
@@ -70,7 +72,8 @@ export async function ensurePatient(senderId: string): Promise<PatientInfo> {
         preferredBranchRef1cId: null,
         hasBookedConsultation: false,
         nameSource: null,
-        nameChangeOffered: false
+        nameChangeOffered: false,
+        bookingNudgeOffered: false
     }
 }
 

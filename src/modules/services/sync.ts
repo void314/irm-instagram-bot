@@ -4,6 +4,7 @@ import { env } from '../../config/constants'
 import { BRANCHES } from '../../constants/branches'
 import { db } from '../../db/client'
 import { services } from '../../db/schema'
+import { classifyServiceNames } from './service-classifier'
 
 const API_BASE = env.EXTERNAL_API_BASE_URL || 'https://rk.etl.uzun.kz/api/v1'
 
@@ -134,7 +135,14 @@ export async function fetchAndUpdateServices(): Promise<SyncResult> {
         }
     }
 
+    // Категоризация делается один раз по уникальным названиям услуг (их на порядок
+    // меньше, чем строк allItems), а не на каждую строку — иначе LLM гонялась бы
+    // тысячи раз за один синк. Уже классифицированные ранее названия берутся из кеша.
+    const categoryMap = await classifyServiceNames(allItems.map((item) => item.name))
+
     for (const item of allItems) {
+        const category = categoryMap.get(item.name) ?? null
+
         const existing = await db
             .select({ id: services.id })
             .from(services)
@@ -151,6 +159,7 @@ export async function fetchAndUpdateServices(): Promise<SyncResult> {
                     parentRef1cId: item.parentRef1cId,
                     branchRef1cId: item.branchRef1cId,
                     citizenship: item.citizenship,
+                    category,
                     updatedAt: new Date()
                 })
                 .where(eq(services.id, existing.id))
@@ -164,7 +173,8 @@ export async function fetchAndUpdateServices(): Promise<SyncResult> {
                 parentRef1cId: item.parentRef1cId,
                 branchRef1cId: item.branchRef1cId,
                 priceListId: item.priceListId,
-                citizenship: item.citizenship
+                citizenship: item.citizenship,
+                category
             })
             added++
         }

@@ -77,6 +77,7 @@ export const patients = pgTable('patients', {
     hasBookedConsultation: boolean('has_booked_consultation').default(false).notNull(),
     nameSource: text('name_source'),
     nameChangeOffered: boolean('name_change_offered').default(false).notNull(),
+    bookingNudgeOffered: boolean('booking_nudge_offered').default(false).notNull(),
     metadata: jsonb('metadata').$type<Record<string, unknown>>(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull()
@@ -92,6 +93,7 @@ export const services = pgTable('services', {
     branchRef1cId: text('branch_ref_1c_id'),
     priceListId: text('price_list_id'),
     citizenship: text('citizenship').$type<'kz' | 'foreign'>(),
+    category: text('category'),
     metadata: jsonb('metadata').$type<Record<string, unknown>>(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull()
