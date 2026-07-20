@@ -1,4 +1,5 @@
 import { getBranchesList } from '../../constants/branches'
+import { AIGERIM_CORE } from '../../services/rag/persona'
 import { type ChatMessage, chat } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
 import { type PatientInfo, getPatient, updatePatient } from '../../services/rag/patient'
@@ -38,8 +39,8 @@ function buildKnownPatientBlock(patient: PatientInfo | null, lang: 'ru' | 'kk' |
 }
 
 function buildSystemPrompt(patient: PatientInfo | null, lang: 'ru' | 'kk' | 'en'): string {
-    return `Ты — Айгерим, консультант клиники репродуктивного здоровья IRM Clinic.
-Пациент согласен записаться на консультацию. Твоя задача — довести запись до конца, следуя строгой
+    return AIGERIM_CORE + '\n\n' +
+`Пациент согласен записаться на консультацию. Твоя задача — довести запись до конца, следуя строгой
 последовательности, не пропуская шаги и не спрашивая то, что уже известно.
 
 === ЧТО УЖЕ ИЗВЕСТНО О ПАЦИЕНТЕ ===
@@ -83,9 +84,7 @@ ${COMPLETION_MARKER}
 за обращение и вежливо заверши разговор. НЕ выводи маркер "${COMPLETION_MARKER}" в этом случае.
 
 === ОБЩИЕ ПРАВИЛА ===
-- Обращайся на «Вы», будь вежлива и естественна, не зачитывай длинные списки без необходимости.
 - Не придумывай врачей, расписание или цены — используй только данные из инструментов.
-- Не ставь диагноз и не давай медицинских гарантий.
 - При вызове get_doctor_schedule передавай название врача/специализации на РУССКОМ языке,
   даже если пациент общается на казахском или английском — переведи сам.
 

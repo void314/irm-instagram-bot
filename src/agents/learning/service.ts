@@ -32,13 +32,16 @@ export async function processCorrection(feedbackId: bigint) {
     if (!feedback) return
 
     // 1. Extract core meaning (we can save this to metadata if we want, or use it to generate session_id)
-    const extractionResponse = await chat([
-        { role: 'system', content: EXTRACT_CORE_PROMPT },
-        {
-            role: 'user',
-            content: `Вопрос пользователя: ${feedback.query}\nОтвет ИИ: ${feedback.originalResponse}\nИсправление админа: ${feedback.correctedResponse}\nПричина (если есть): ${feedback.correctionReason || 'нет'}`
-        }
-    ])
+    const extractionResponse = await chat(
+        [
+            { role: 'system', content: EXTRACT_CORE_PROMPT },
+            {
+                role: 'user',
+                content: `Вопрос пользователя: ${feedback.query}\nОтвет ИИ: ${feedback.originalResponse}\nИсправление админа: ${feedback.correctedResponse}\nПричина (если есть): ${feedback.correctionReason || 'нет'}`
+            }
+        ],
+        { model: 'qwen/qwen3.7-max' }
+    )
 
     const coreFact = extractionResponse.content
     log.info({ module: 'learning', feedbackId: Number(feedbackId) }, 'Extracted core fact: ' + coreFact)

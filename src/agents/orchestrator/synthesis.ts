@@ -71,7 +71,7 @@ export async function synthesizeFinalAnswer(
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: query }
             ],
-            { model: 'openai/gpt-4o-mini', temperature: 0.3, max_tokens: 800 }
+            { model: 'qwen/qwen3.7-max', temperature: 0.3, max_tokens: 800 }
         )
         return result.content.trim()
     } catch {

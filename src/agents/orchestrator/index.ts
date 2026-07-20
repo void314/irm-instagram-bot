@@ -171,6 +171,11 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         'Pipeline started'
     )
 
+    // Start patient fetch in parallel with intent detection
+    const patientPromise: Promise<PatientInfo | null> = context
+        ? getPatient(context.senderId)
+        : Promise.resolve(null)
+
     const intentResult = await detectIntentLLM(query, lastBotMessage)
     debug.intentType = intentResult.type
     log.info({ module: 'orchestrator', intent: intentResult.type, language: effectiveLang }, 'Intent detected')
@@ -205,11 +210,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
     // --- Fast Path: Booking Intent ---
     if (context && intentResult.type === 'booking') {
-        let bookingHistory = ''
-        const ctx = await getConversationContext(context.conversationId)
-        if (ctx.history) bookingHistory = ctx.history
-
-        const result = await handleBookingIntent(query, context.senderId, bookingHistory, effectiveLang)
+        const result = await handleBookingIntent(query, context.senderId, history || '', effectiveLang)
         await incrementMessageCount(context.conversationId)
 
         const res: RagResponse = {
@@ -224,16 +225,19 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
     // --- Load patient info for remaining flows ---
     if (context) {
+        patient = await patientPromise
+        patientStr = formatPatientContext(patient)
+
         const detectedBranch = findBranchByNameOrCity(query)
         if (detectedBranch) {
             await updatePatient(context.senderId, {
                 preferredBranch: detectedBranch.name,
                 preferredBranchRef1cId: detectedBranch.ref1cId
             })
+            patient.preferredBranch = detectedBranch.name
+            patient.preferredBranchRef1cId = detectedBranch.ref1cId
+            patientStr = formatPatientContext(patient)
         }
-
-        patient = await getPatient(context.senderId)
-        patientStr = formatPatientContext(patient)
     }
 
     // --- Fast Path: Booking Decline ---
@@ -388,20 +392,27 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         )
     }
 
-    // DB side-effects for flags that were passed to synthesis
+    // Fire-and-forget DB side-effects (don't block the response)
     if (context) {
         if (shouldSuggestBooking || shouldNudgeBooking) {
-            await updatePatient(context.senderId, { bookingNudgeOffered: true })
+            updatePatient(context.senderId, { bookingNudgeOffered: true }).catch((err) =>
+                log.error({ module: 'orchestrator', error: String(err) }, 'Failed to update booking nudge')
+            )
         }
         if (askForName) {
-            await updatePatient(context.senderId, { nameChangeOffered: true })
+            updatePatient(context.senderId, { nameChangeOffered: true }).catch((err) =>
+                log.error({ module: 'orchestrator', error: String(err) }, 'Failed to update nameChangeOffered')
+            )
         }
-        await incrementMessageCount(context.conversationId)
+        incrementMessageCount(context.conversationId).catch((err) =>
+            log.error({ module: 'orchestrator', error: String(err) }, 'Failed to increment message count')
+        )
 
-        // Extract patient data only from substantive (non-clarifying) answers
         const isClarifying = answer.length < 100 && answer.trim().endsWith('?')
         if (!isClarifying) {
-            await extractPatientData(query, history || 'нет', answer, patient, context.senderId)
+            extractPatientData(query, history || 'нет', answer, patient, context.senderId).catch((err) =>
+                log.warn({ module: 'orchestrator', error: String(err) }, 'Failed to extract patient data')
+            )
         }
     }
 

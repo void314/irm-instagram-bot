@@ -37,7 +37,7 @@ async function extractCitizenshipFromQuery(query: string): Promise<'kz' | 'forei
                 { role: 'user', content: query }
             ],
             {
-                model: 'openai/gpt-4o-mini',
+                model: 'deepseek/deepseek-v4-flash',
                 temperature: 0,
                 max_tokens: 30,
                 response_format: { type: 'json_object' }
@@ -108,7 +108,12 @@ export async function handlePriceIntent(
 
     if (missing.length > 0) {
         const baseAnswer = missing.includes('branch') ? buildBranchQuestion(lang) : buildCitizenshipQuestion(lang)
-        return { content: baseAnswer, confidence: 'low', gaps: [], updatedPatient }
+        return {
+            content: baseAnswer,
+            confidence: 'low',
+            gaps: [],
+            updatedPatient: updatedPatient as unknown as Record<string, unknown> | undefined
+        }
     }
 
     if (updatedPatient?.preferredBranchRef1cId) toolArgs.branch_ref1c_id = updatedPatient.preferredBranchRef1cId
@@ -120,7 +125,12 @@ export async function handlePriceIntent(
         log.info({ module: 'agent:tool', hasPatient: !!updatedPatient }, 'Price intent: tool direct')
 
         if (result.found) {
-            return { content: result.answer, confidence: 'high', gaps: [], updatedPatient }
+            return {
+                content: result.answer,
+                confidence: 'high',
+                gaps: [],
+                updatedPatient: updatedPatient as unknown as Record<string, unknown> | undefined
+            }
         }
 
         return {
@@ -133,17 +143,28 @@ export async function handlePriceIntent(
                     priority: 'critical'
                 }
             ],
-            updatedPatient
+            updatedPatient: updatedPatient as unknown as Record<string, unknown> | undefined
         }
     } catch (err) {
         log.error({ module: 'agent:tool', error: String(err) }, 'Price intent tool error')
-        const answer =
-            lang === 'kk'
-                ? 'Бағаларды алу мүмкін болмады. Қайтадан байқап көріңіз.'
-                : lang === 'en'
-                  ? 'Could not retrieve prices. Please try again.'
-                  : 'Не удалось получить цены. Попробуйте ещё раз.'
+        let answer = ''
+        switch (lang) {
+            case 'kk':
+                answer = 'Бағаларды алу мүмкін болмады. Қайтадан байқап көріңіз.'
+                break
+            case 'en':
+                answer = 'Could not retrieve prices. Please try again.'
+                break
+            default:
+                answer = 'Не удалось получить цены. Попробуйте ещё раз.'
+                break
+        }
 
-        return { content: answer, confidence: 'low', gaps: [], updatedPatient }
+        return {
+            content: answer,
+            confidence: 'low',
+            gaps: [],
+            updatedPatient: updatedPatient as unknown as Record<string, unknown> | undefined
+        }
     }
 }

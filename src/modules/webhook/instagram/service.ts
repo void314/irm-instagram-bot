@@ -174,15 +174,22 @@ export class InstagramWebhookService {
     }
 
     public async processPayload(payload: InstagramWebhookPayload): Promise<WebhookEventResponse200> {
-        const entries = payload.entry || []
+        try {
+            const entries = payload.entry || []
 
-        log.info(
-            { module: 'webhook', object: payload.object, entryCount: entries.length },
-            '[webhook] payload received'
-        )
+            log.info(
+                { module: 'webhook', object: payload.object, entryCount: entries.length },
+                '[webhook] payload received'
+            )
 
-        for (const entry of entries) {
-            await this.processEntry(entry)
+            for (const entry of entries) {
+                await this.processEntry(entry)
+            }
+        } catch (err) {
+            log.error(
+                { module: 'webhook', error: String(err) },
+                '[webhook] background processing failed'
+            )
         }
 
         return WEBHOOK_SUCCESS_RESPONSE
@@ -271,12 +278,16 @@ export class InstagramWebhookService {
             '[webhook] incoming message'
         )
 
-        let conv = await db
-            .select()
-            .from(conversations)
-            .where(eq(conversations.senderId, senderId))
-            .then((rows) => rows[0])
+        const [convRow, patient] = await Promise.all([
+            db
+                .select()
+                .from(conversations)
+                .where(eq(conversations.senderId, senderId))
+                .then((rows) => rows[0]),
+            ensurePatient(senderId)
+        ])
 
+        let conv = convRow
         const isNewConversation = !conv
 
         if (isNewConversation && env.INSTAGRAM_BUSINESS_ID) {
@@ -297,43 +308,36 @@ export class InstagramWebhookService {
             return
         }
 
-        const patient = await ensurePatient(senderId)
-
+        // Fire-and-forget Instagram user info enrichment (non-blocking)
         if (isNewConversation) {
-            const token = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID!)
-            if (token) {
-                const igInfo = await fetchInstagramUserInfo(senderId, token)
-                if (igInfo) {
-                    const updates: Parameters<typeof updatePatient>[1] = {
-                        instagramName: igInfo.name,
-                        instagramUsername: igInfo.username
-                    }
-                    // Показываем модели инстаграм-имя, только пока у пациента ещё нет
-                    // подтверждённого настоящего имени — иначе не перезаписываем источник.
-                    if (!patient.name && !patient.nameSource) {
-                        updates.nameSource = 'instagram'
-                    }
-                    await updatePatient(senderId, updates)
-                    if (!patient.name) {
-                        patient.instagramName = igInfo.name
-                        patient.instagramUsername = igInfo.username
-                    }
-                    log.info(
-                        { module: 'webhook', senderId, name: igInfo.name },
-                        '[webhook] instagram user info fetched'
-                    )
+            tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID!).then((token) => {
+                if (!token) return
+                return fetchInstagramUserInfo(senderId, token)
+            }).then((igInfo) => {
+                if (!igInfo) return
+                const updates: Parameters<typeof updatePatient>[1] = {
+                    instagramName: igInfo.name,
+                    instagramUsername: igInfo.username
                 }
-            }
+                if (!patient.name && !patient.nameSource) {
+                    updates.nameSource = 'instagram'
+                }
+                return updatePatient(senderId, updates)
+            }).catch((err) => {
+                log.warn({ module: 'webhook', error: String(err) }, '[webhook] instagram info fetch failed')
+            })
         }
 
         if (env.INSTAGRAM_BUSINESS_ID && text) {
-            await db.insert(messages).values({
+            db.insert(messages).values({
                 conversationId: conv.id,
                 fromId: senderId,
                 text
+            }).then(() => {
+                log.info({ module: 'webhook', conversationId: conv.id.toString() }, '[webhook] message stored')
+            }).catch((err) => {
+                log.error({ module: 'webhook', error: String(err) }, '[webhook] message insert failed')
             })
-
-            log.info({ module: 'webhook', conversationId: conv.id.toString() }, '[webhook] message stored')
         }
 
         const question = text || env.WEBHOOK_AUTO_REPLY_TEXT
@@ -355,15 +359,19 @@ export class InstagramWebhookService {
                 '[webhook] pipeline result'
             )
 
+            const chunks = splitIntoChunks(answer)
+
+            // Save bot answer in background — don't block sending
             if (env.INSTAGRAM_BUSINESS_ID && answer) {
-                await db.insert(messages).values({
+                db.insert(messages).values({
                     conversationId: conv.id,
                     fromId: env.INSTAGRAM_BUSINESS_ID,
                     text: answer
+                }).catch((err) => {
+                    log.error({ module: 'webhook', error: String(err) }, '[webhook] bot answer insert failed')
                 })
             }
 
-            const chunks = splitIntoChunks(answer)
             let lastOk = false
             for (const chunk of chunks) {
                 const result = await this.instagramMessagingService.sendTextMessage(senderId, chunk)
@@ -378,9 +386,13 @@ export class InstagramWebhookService {
                 lastOk = true
             }
 
+            // Fire-and-forget summary update
             if (conv.messageCount !== null && conv.messageCount % 6 === 0 && conv.messageCount > 0) {
-                const { updateConversationSummary } = await import('../../../services/rag/context')
-                await updateConversationSummary(conv.id)
+                import('../../../services/rag/context').then(({ updateConversationSummary }) => {
+                    updateConversationSummary(conv.id).catch((err) => {
+                        log.error({ module: 'webhook', error: String(err) }, '[webhook] summary update failed')
+                    })
+                })
             }
 
             if (!lastOk) {
