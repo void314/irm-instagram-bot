@@ -3,6 +3,7 @@ import { chat } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
 import { type PatientInfo, updatePatient } from '../../services/rag/patient'
 import { executeTool } from '../../services/tools'
+import type { AgentResult } from '../types'
 
 function buildBranchQuestion(lang: 'ru' | 'kk' | 'en'): string {
     if (lang === 'kk') return `Клиника филиалын нақтылаңызшы.\nҚолжетімді филиалдар:\n${getBranchesList()}`
@@ -68,7 +69,7 @@ export async function handlePriceIntent(
     conversationId: bigint,
     lang: 'ru' | 'kk' | 'en' = 'ru',
     history?: string
-): Promise<{ answer: string; missingInfo: boolean; updatedPatient: PatientInfo | null }> {
+): Promise<AgentResult> {
     const toolArgs: Record<string, unknown> = { query, lang }
     let updatedPatient = patient
 
@@ -107,26 +108,42 @@ export async function handlePriceIntent(
 
     if (missing.length > 0) {
         const baseAnswer = missing.includes('branch') ? buildBranchQuestion(lang) : buildCitizenshipQuestion(lang)
-        return { answer: baseAnswer, missingInfo: true, updatedPatient }
+        return { content: baseAnswer, confidence: 'low', gaps: [], updatedPatient }
     }
 
     if (updatedPatient?.preferredBranchRef1cId) toolArgs.branch_ref1c_id = updatedPatient.preferredBranchRef1cId
     if (updatedPatient?.preferredBranch) toolArgs.branch_name = updatedPatient.preferredBranch
     if (effectiveCitizenship) toolArgs.citizenship = effectiveCitizenship
 
-    let answer = ''
     try {
-        answer = await executeTool('get_prices', toolArgs, updatedPatient)
+        const result = await executeTool('get_prices', toolArgs, updatedPatient)
         log.info({ module: 'agent:tool', hasPatient: !!updatedPatient }, 'Price intent: tool direct')
+
+        if (result.found) {
+            return { content: result.answer, confidence: 'high', gaps: [], updatedPatient }
+        }
+
+        return {
+            content: result.answer,
+            confidence: 'low',
+            gaps: [
+                {
+                    type: 'service_composition',
+                    description: 'Прямая цена не найдена. Нужно узнать состав услуги через базу знаний.',
+                    priority: 'critical'
+                }
+            ],
+            updatedPatient
+        }
     } catch (err) {
         log.error({ module: 'agent:tool', error: String(err) }, 'Price intent tool error')
-        answer =
+        const answer =
             lang === 'kk'
                 ? 'Бағаларды алу мүмкін болмады. Қайтадан байқап көріңіз.'
                 : lang === 'en'
                   ? 'Could not retrieve prices. Please try again.'
                   : 'Не удалось получить цены. Попробуйте ещё раз.'
-    }
 
-    return { answer, missingInfo: false, updatedPatient }
+        return { content: answer, confidence: 'low', gaps: [], updatedPatient }
+    }
 }

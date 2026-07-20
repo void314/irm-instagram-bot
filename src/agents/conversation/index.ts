@@ -1,6 +1,7 @@
 import { log } from '../../services/logger'
 import { getFastIntentResponse, getNameAcknowledgeResponse } from '../../services/rag/intent'
 import { type PatientInfo, getPatient, updatePatient } from '../../services/rag/patient'
+import type { AgentResult } from '../types'
 
 /**
  * Простая валидация "похоже ли это на имя", а не классификация интента.
@@ -26,7 +27,7 @@ export async function handleConversationIntent(
     conversationId: bigint,
     intentType: string,
     isFirstMessage = false
-): Promise<{ answer: string; intent: string } | null> {
+): Promise<AgentResult | null> {
     const patient = await getPatient(senderId)
 
     // Пользователь ответил на вопрос "как я могу к Вам обращаться?"
@@ -40,7 +41,7 @@ export async function handleConversationIntent(
         await updatePatient(senderId, { name: nameCandidate, nameSource: 'user', nameChangeOffered: true })
         log.info({ module: 'agent:conversation', senderId, intent: 'provide_name' }, 'Patient name saved')
 
-        return { answer: getNameAcknowledgeResponse(nameCandidate, detectedLang), intent: 'provide_name' }
+        return { content: getNameAcknowledgeResponse(nameCandidate, detectedLang), confidence: 'high', gaps: [] }
     }
 
     const displayName = getDisplayName(patient)
@@ -67,7 +68,7 @@ export async function handleConversationIntent(
             .where(eq(conversations.id, conversationId))
     }
 
-    return { answer, intent: intentType }
+    return { content: answer, confidence: 'high', gaps: [] }
 }
 
 function looksLikeNickname(name: string): boolean {

@@ -40,13 +40,11 @@ export async function executeTool(
     functionName: string,
     args: Record<string, unknown>,
     patient?: PatientInfo | null
-): Promise<string> {
+): Promise<ToolResult> {
     const fn = toolMap[functionName]
     if (!fn) {
         throw new Error(`Unknown tool: ${functionName}`)
     }
 
-    const result = await fn(args, patient)
-
-    return result.answer
+    return await fn(args, patient)
 }

@@ -376,6 +376,7 @@ adminController.post(
                     preferredBranch: null,
                     preferredBranchRef1cId: null,
                     hasBookedConsultation: false,
+                    bookingNudgeOffered: false,
                     nameSource: null,
                     nameChangeOffered: false,
                     updatedAt: new Date()

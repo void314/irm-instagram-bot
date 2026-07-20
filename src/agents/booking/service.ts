@@ -3,6 +3,7 @@ import { type ChatMessage, chat } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
 import { type PatientInfo, getPatient, updatePatient } from '../../services/rag/patient'
 import { executeTool, getToolDefinitions } from '../../services/tools'
+import type { AgentResult } from '../types'
 
 // Маркер завершённой записи в тестовом режиме — по нему детектируем факт
 // успешной записи и проставляем hasBookedConsultation. Держим в отдельной
@@ -94,7 +95,7 @@ export async function handleBookingIntent(
     senderId: string,
     history: string,
     lang: 'ru' | 'kk' | 'en' = 'ru'
-): Promise<string> {
+): Promise<AgentResult> {
     log.info({ module: 'booking' }, 'Handling booking intent')
 
     const patient = await getPatient(senderId)
@@ -119,8 +120,8 @@ export async function handleBookingIntent(
 
         for (const tc of first.toolCalls) {
             try {
-                const result = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
-                messages.push({ role: 'tool', content: result, tool_call_id: tc.id })
+                const toolResult = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
+                messages.push({ role: 'tool', content: toolResult.answer, tool_call_id: tc.id })
             } catch (err) {
                 messages.push({ role: 'tool', content: `Ошибка: ${String(err)}`, tool_call_id: tc.id })
             }
@@ -135,5 +136,6 @@ export async function handleBookingIntent(
         log.info({ module: 'booking', senderId }, 'Booking completed in emulation mode')
     }
 
-    return finalAnswer || 'Произошла ошибка при записи. Попробуйте еще раз.'
+    const answer = finalAnswer || 'Произошла ошибка при записи. Попробуйте еще раз.'
+    return { content: answer, confidence: 'high', gaps: [] }
 }

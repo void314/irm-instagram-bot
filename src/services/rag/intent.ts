@@ -9,6 +9,7 @@ export interface IntentResult {
         | 'objection'
         | 'query'
         | 'booking'
+        | 'booking_decline'
         | 'prices'
         | 'provide_name'
 }
@@ -44,24 +45,30 @@ const CLEAR_CONTEXT_RESPONSES: Record<'ru' | 'kk' | 'en', string> = {
 }
 
 const GREETING_FULL: Record<'ru' | 'kk' | 'en', string> = {
-    ru: 'Здравствуйте! IRM Clinic, консультант Айгерим. Чем я могу Вам помочь?',
-    kk: 'Сәлеметсіз бе! IRM Clinic, консультант Айгерим. Сізге қалай көмектесе аламын?',
-    en: 'Hello! IRM Clinic, consultant Aigerim. How can I help you?'
+    ru: 'Здравствуйте! IRM Clinic, AI-консультант Айгерим. Чем я могу Вам помочь?',
+    kk: 'Сәлеметсіз бе! IRM Clinic, AI-консультант Айгерим. Сізге қалай көмектесе аламын?',
+    en: 'Hello! IRM Clinic, AI consultant Aigerim. How can I help you?'
 }
 
 const GREETING_SHORT: Record<'ru' | 'kk' | 'en', string> = {
-    ru: 'Здравствуйте! Расскажите, что Вас привело в IRM Clinic? Я могу рассказать о программах лечения, ценах на услуги или записать Вас на консультацию.',
-    kk: 'Сәлеметсіз бе! Сізді IRM Clinic-ке не алып келгенін айтыңызшы? Емдеу бағдарламалары, қызмет бағалары туралы айтып бере аламын немесе кеңеске жаза аламын.',
-    en: 'Hello! Tell me, what brought you to IRM Clinic? I can tell you about treatment programs, service prices, or book you for a consultation.'
+    ru: 'Чем я могу Вам помочь?',
+    kk: 'Сізге қалай көмектесе аламын?',
+    en: 'How can I help you?'
 }
 
 const GREETING_NAMED: Record<'ru' | 'kk' | 'en', (name: string) => string> = {
     ru: (name) =>
-        `Здравствуйте, ${name}! Расскажите, что Вас привело в IRM Clinic? Я могу рассказать о программах лечения, ценах на услуги или записать Вас на консультацию.`,
+        `Здравствуйте ${name}, AI-консультант IRM-Clinic Айгерим. Чем я могу Вам помочь?`,
     kk: (name) =>
-        `Сәлеметсіз бе, ${name}! Сізді IRM Clinic-ке не алып келгенін айтыңызшы? Емдеу бағдарламалары, қызмет бағалары туралы айтып бере аламын немесе кеңеске жаза аламын.`,
+        `Сәлеметсіз бе ${name}, AI-консультант IRM-Clinic Айгерим. Сізге қалай көмектесе аламын?`,
     en: (name) =>
-        `Hello, ${name}! Tell me, what brought you to IRM Clinic? I can tell you about treatment programs, service prices, or book you for a consultation.`
+        `Hello ${name}, AI consultant at IRM-Clinic, Aigerim. How can I help you?`
+}
+
+const GREETING_CONTINUATION: Record<'ru' | 'kk' | 'en', (name: string) => string> = {
+    ru: (name) => `${name}, чем я могу помочь?`,
+    kk: (name) => `${name}, сізге қалай көмектесе аламын?`,
+    en: (name) => `${name}, how can I help you?`
 }
 
 const NAME_ACKNOWLEDGE: Record<'ru' | 'kk' | 'en', (name: string) => string> = {
@@ -97,8 +104,9 @@ export function getFastIntentResponse(
     const lang = language || 'ru'
 
     if (type === 'greeting') {
-        if (ctx.name) return GREETING_NAMED[lang](ctx.name)
+        if (ctx.isFirstMessage && ctx.name) return GREETING_NAMED[lang](ctx.name)
         if (ctx.isFirstMessage) return GREETING_FULL[lang]
+        if (ctx.name) return GREETING_CONTINUATION[lang](ctx.name)
         return GREETING_SHORT[lang]
     }
 
@@ -134,6 +142,9 @@ function buildClassificationPrompt(lastBotMessage?: string | null): string {
 - "booking": явное желание записаться на прием к врачу или на процедуру (запишите меня, хочу на прием),
   ИЛИ ответ на уточняющий вопрос бота в рамках уже идущего процесса записи (врач/специалист, день, время,
   филиал, язык общения, ФИО, телефон — если последнее сообщение бота было частью оформления записи)
+- "booking_decline": отказ от записи на приём. Если последнее сообщение бота содержало предложение
+  записаться (вопрос "записать вас?", "хотите на консультацию?" и т.п.), а пользователь ответил коротким
+  отказом ("нет", "не надо", "не хочу", "no", "жоқ", "не", "спасибо не надо") — верни "booking_decline".
 - "prices": вопрос о стоимости услуг, анализов или процедур, ИЛИ ответ на уточняющий вопрос бота о филиале/гражданстве, заданный в рамках обсуждения цен
 - "objection": возражение, сомнение (слишком дорого, я подумаю, перезвоню позже, в другой клинике дешевле)
 - "query": любые другие информационные вопросы (расписание, какие врачи есть, как проходит ЭКО)
@@ -172,6 +183,7 @@ const VALID_TYPES = [
     'objection',
     'query',
     'booking',
+    'booking_decline',
     'prices',
     'provide_name'
 ]

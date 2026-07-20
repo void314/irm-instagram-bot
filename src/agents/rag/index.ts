@@ -10,6 +10,7 @@ import { SYSTEM_PROMPT_NO_CONTEXT, SYSTEM_PROMPT_WITH_CONTEXT } from '../../serv
 import { resolveSearchQueries } from '../../services/rag/query-rewrite'
 import { executeTool, getToolDefinitions } from '../../services/tools'
 import { type RagDebug } from '../orchestrator'
+import type { AgentResult } from '../types'
 
 // We'll move it or just use it from there
 
@@ -63,7 +64,7 @@ export async function processRagQuery(
     patientStr: string,
     patient: PatientInfo | null,
     debug: RagDebug
-): Promise<{ answer: string; needsClarification: boolean; searchResults: any[] }> {
+): Promise<AgentResult> {
     const parsedHistory = parseHistory(history)
     const searchQueries = await resolveSearchQueries(query, parsedHistory)
     if (searchQueries.length > 1) {
@@ -120,8 +121,12 @@ export async function processRagQuery(
 
             for (const tc of first.toolCalls) {
                 try {
-                    const result = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
-                    toolMessages.push({ role: 'tool', content: result, tool_call_id: tc.id })
+                    const toolResult = await executeTool(
+                        tc.function.name,
+                        JSON.parse(tc.function.arguments),
+                        patient
+                    )
+                    toolMessages.push({ role: 'tool', content: toolResult.answer, tool_call_id: tc.id })
                 } catch (err) {
                     toolMessages.push({ role: 'tool', content: `Ошибка: ${String(err)}`, tool_call_id: tc.id })
                 }
@@ -147,7 +152,7 @@ export async function processRagQuery(
             overrideStr +
             `\n\nВАЖНО: Итоговый ответ пользователю сформируй строго на языке: ${debug.language === 'kk' ? 'казахском' : debug.language === 'en' ? 'английском' : 'русском'}.`
         const { content: answer } = await callLlmWithTools(systemMsg)
-        return { answer, needsClarification: false, searchResults }
+        return { content: answer, confidence: 'partial', gaps: [] }
     }
 
     const allScores = searchResults.map((r) => r.score)
@@ -181,8 +186,8 @@ export async function processRagQuery(
     debug.groundingPassed = grounding.passed
 
     if (grounding.needsClarification && grounding.clarificationQuestion) {
-        return { answer: grounding.clarificationQuestion, needsClarification: true, searchResults }
+        return { content: grounding.clarificationQuestion, confidence: 'partial', gaps: [] }
     }
 
-    return { answer, needsClarification: false, searchResults }
+    return { content: answer, confidence: 'high', gaps: [] }
 }

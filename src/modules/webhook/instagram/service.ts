@@ -355,44 +355,42 @@ export class InstagramWebhookService {
                 '[webhook] pipeline result'
             )
 
-            if (intent !== 'clear_context') {
-                if (env.INSTAGRAM_BUSINESS_ID && answer) {
-                    await db.insert(messages).values({
-                        conversationId: conv.id,
-                        fromId: env.INSTAGRAM_BUSINESS_ID,
-                        text: answer
-                    })
-                }
-
-                const chunks = splitIntoChunks(answer)
-                let lastOk = false
-                for (const chunk of chunks) {
-                    const result = await this.instagramMessagingService.sendTextMessage(senderId, chunk)
-                    if (result.status === 'error') {
-                        log.error(
-                            { module: 'webhook', error: result.message, chunkLength: chunk.length },
-                            '[webhook] reply chunk failed'
-                        )
-                        lastOk = false
-                        break
-                    }
-                    lastOk = true
-                }
-
-                if (conv.messageCount !== null && conv.messageCount % 6 === 0 && conv.messageCount > 0) {
-                    const { updateConversationSummary } = await import('../../../services/rag/context')
-                    await updateConversationSummary(conv.id)
-                }
-
-                if (!lastOk) {
-                    return
-                }
-
-                log.info(
-                    { module: 'webhook', chunkCount: chunks.length, totalLength: answer.length, intent },
-                    '[webhook] reply sent'
-                )
+            if (env.INSTAGRAM_BUSINESS_ID && answer) {
+                await db.insert(messages).values({
+                    conversationId: conv.id,
+                    fromId: env.INSTAGRAM_BUSINESS_ID,
+                    text: answer
+                })
             }
+
+            const chunks = splitIntoChunks(answer)
+            let lastOk = false
+            for (const chunk of chunks) {
+                const result = await this.instagramMessagingService.sendTextMessage(senderId, chunk)
+                if (result.status === 'error') {
+                    log.error(
+                        { module: 'webhook', error: result.message, chunkLength: chunk.length },
+                        '[webhook] reply chunk failed'
+                    )
+                    lastOk = false
+                    break
+                }
+                lastOk = true
+            }
+
+            if (conv.messageCount !== null && conv.messageCount % 6 === 0 && conv.messageCount > 0) {
+                const { updateConversationSummary } = await import('../../../services/rag/context')
+                await updateConversationSummary(conv.id)
+            }
+
+            if (!lastOk) {
+                return
+            }
+
+            log.info(
+                { module: 'webhook', chunkCount: chunks.length, totalLength: answer.length, intent },
+                '[webhook] reply sent'
+            )
         } catch (err) {
             log.error({ module: 'webhook', error: String(err) }, '[webhook] pipeline error')
 

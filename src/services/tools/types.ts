@@ -1,6 +1,7 @@
 export interface ToolResult {
     success: boolean
     answer: string
+    found: boolean
 }
 
 export interface Tool {

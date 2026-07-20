@@ -1,64 +1,106 @@
-# IRM Instagram AI Assistant — Архитектурный план
+# IRM Instagram AI Assistant — Архитектура
 
 ## Цель
 
-Эволюция проекта в multi-agent CRM систему для комплексного обслуживания клиентов в Instagram с поддержкой масштабирования и механикой автоматического обучения.
+Multi-agent backend для AI-ассистента клиники IRM, обрабатывающего Instagram Direct.
+Система использует RAG (Retrieval-Augmented Generation) и оркестратор суб-агентов.
 
 ---
 
-## 1. Общая архитектура
+## 1. Collective Pipeline — текущая архитектура
 
 ```
-Instagram DM ──► Webhook ──► Orchestrator Agent
+Instagram DM ──► Webhook ──► Orchestrator (runPipeline)
                                     │
                     ┌───────────────┼──────────────────┐
                     ▼               ▼                    ▼
-           ┌────────────┐  ┌────────────┐  ┌──────────────────┐
-           │ Conversation│  │  RAG       │  │    Tool Agent    │
-           │   Agent     │  │  Agent     │  │ (prices, doctors,│
-           │ (greeting,  │  │ (knowledge)│  │  schedule)       │
-           │  chitchat)  │  └────────────┘  └────────┬─────────┘
-           └────────────┘                            │
-                                      ┌──────────────┘
-                                      ▼
-                             ┌────────────────┐
-                             │ Objection Agent│
-                             │  (возражения)  │
-                             └────────────────┘
+           ┌────────────────┐ ┌────────────┐ ┌──────────────────┐
+           │  Tool Agent    │ │  RAG Agent │ │  Booking Agent   │
+           │ (prices, docs, │ │(knowledge, │ │  (booking flow)  │
+           │  schedule)     │ │ composition│ └──────────────────┘
+           └───────┬────────┘ └─────┬──────┘
+                   │                │
+           ┌───────▼────────────────▼──────┐
+           │    Conversation / Objection   │
+           │    (быстрые regex/LLM пути)   │
+           └───────────────────────────────┘
 
-                                      ▼
-                             ┌────────────────┐
-                             │  Booking Agent │
-                             │  (запись,      │
-                             │   эмуляция)    │
-                             └────────────────┘
-
-После ответа ──► Learning Agent (фоново)
-                     ├── Сохранить фидбек
-                     ├── Кластеризация исправлений
-                     └── Генерация KB suggestions
+Все агенты возвращают AgentResult { content, confidence, gaps[] }
 ```
 
-### 1.1 Оркестратор + суб-агенты (гибрид)
+### Принцип
 
-**Orchestrator Agent** — единая точка входа. Определяет интент (LLM + regex), ведет общий контекст беседы, выбирает суб-агента, выполняет пост-обработку (patient info extraction, суммаризация).
+- **Оркестратор** — единый ответственный за ответ пользователю.
+  Определяет интент, диспатчит суб-агентам, собирает данные,
+  формирует финальный ответ с полной персоной (IRM_BASE).
+- **Суб-агенты** — возвращают данные, а не готовые ответы.
+  Не содержат CTA, не персонализируют.
+- **Gap-сигналы** — если агент не может закрыть запрос полностью,
+  он возвращает gaps \[], которые оркестратор закрывает другими агентами.
 
-**Суб-агенты:**
+### Типы
 
-| Агент                  | Задача                                             | Вход                                  |
-| ---------------------- | -------------------------------------------------- | ------------------------------------- |
-| **Conversation Agent** | Приветствия, прощания, благодарности, светский чат | `intent = greeting/goodbye/gratitude` |
-| **RAG Agent**          | Поиск по БД знаний, ответы на вопросы о клинике    | `intent = query && has_knowledge`     |
-| **Tool Agent**         | Цены, расписание, поиск врачей                     | `intent = price/schedule/doctor`      |
-| **Booking Agent**      | Запись на прием, сбор данных, подтверждение        | `intent = booking`                    |
-| **Objection Agent**    | Обработка возражений                               | `intent = objection`                  |
-| **Learning Agent**     | Сбор фидбека, генерация предложений в БЗ           | фоново + из админки                   |
+```typescript
+interface AgentResult {
+    content: string              // ответ / данные
+    confidence: 'high' | 'partial' | 'low'
+    gaps: Gap[]                  // чего не хватает
+    updatedPatient?: Record<string, unknown>
+}
+
+interface Gap {
+    type: 'price_info' | 'service_composition' | 'schedule_info'
+        | 'doctor_info' | 'general_knowledge' | 'booking_data'
+    description: string
+    priority: 'critical' | 'nice_to_have'
+}
+```
+
+### Итеративный цикл
+
+```
+1. Primary dispatch по intent → AgentResult
+2. Если gaps есть и critical → войти в loop:
+   selectNextAgent(gaps) → dispatch → merge → check gaps
+3. Max 3 итерации + loop detection
+4. Финальная синтезация (LLM с IRM_BASE) → все данные → ответ
+5. Пост-обработка: имя, CTA, extractPatientData
+```
 
 ---
 
-## 2. Хранилища: RAG Store (ручной) и Learning Store (авто)
+## 2. Агенты
 
-Система использует **два раздельных pgvector-хранилища** с разными весами при поиске.
+| Агент | Задача | Вход |
+|-------|--------|------|
+| **Orchestrator** | Интент, диспатч, синтез, персона, CTA, extraction | Любой query |
+| **Conversation** | Приветствия, прощания, имя | `intent = greeting/goodbye/provide_name` |
+| **Tool** | Цены, расписание, поиск врачей | `intent = prices` |
+| **RAG** | Поиск по БД знаний, описание программ | `intent = query` |
+| **Objection** | Обработка возражений | `intent = objection` |
+| **Booking** | Запись на приём (LLM-driven) | `intent = booking` |
+| **Learning** | Сбор фидбека, генерация KB (фоново) | Admin + BullMQ |
+
+### Conversation Agent
+Быстрый путь (regex, без LLM). Возвращает `AgentResult` с `confidence: 'high'`.
+
+### Tool Agent
+Вызывает `executeTool('get_prices')`. Если не нашёл — возвращает `gaps: [service_composition]`.
+
+### RAG Agent
+Гибридный поиск (BM25 + vector). Возвращает контекст из БЗ.
+Если контекст найден — `confidence: 'high'`, если нет — `'partial'`.
+
+### Objection Agent
+LLM-классификатор + скрипты. Если возражение не обнаружено → null → fallback на query.
+
+### Booking Agent
+LLM-driven диалог сбора данных. Включает tool_calls для get_doctor_schedule.
+При завершении: `hasBookedConsultation = true`.
+
+---
+
+## 3. Хранилища: RAG Store + Learning Store
 
 ```
                     ┌─────────────────────┐
@@ -78,200 +120,63 @@ Instagram DM ──► Webhook ──► Orchestrator Agent
                     └────────────────────────┘
 ```
 
-### Сравнение хранилищ
+| Аспект | RAG Store | Learning Store |
+|--------|-----------|----------------|
+| Таблицы | `documents` → `chunks` | `learning_docs` → `learn_chunks` |
+| source | `manual`, `admin` | `learning` |
+| Наполнение | Админ вручную | Learning agent (авто) |
+| Вес поиска | 1.0 | 0.5 |
+| Отключение | Нет | Да (toggle) |
 
-| Аспект              | RAG Store               | Learning Store                   |
-| ------------------- | ----------------------- | -------------------------------- |
-| **Таблицы**         | `documents` → `chunks`  | `learning_docs` → `learn_chunks` |
-| **source**          | `manual`, `admin`       | `learning`                       |
-| **Кто наполняет**   | Админ вручную, импорт   | Learning agent (авто-генерация)  |
-| **Вес в поиске**    | 1.0 (высокий приоритет) | 0.5 (низкий приоритет)           |
-| **Можно отключить** | Нет (базовая БЗ)        | Да (toggle в админке)            |
-| **Очистка**         | Только руками           | Можно bulk-delete                |
-
-### hybridSearch v2
-
-При поиске опрашиваются оба хранилища и результаты объединяются:
-
-```
-results = []
-results += ragSearch(query, top_k=5)     # вес 1.0
-results += learnSearch(query, top_k=3)   # вес 0.5
-# объединение → дедупликация → сортировка по скорингу
-```
+### hybridSearch
+Оба хранилища опрашиваются, результаты объединяются с весами, дедуплицируются.
 
 ---
 
-## 3. Automatic Learning System
+## 4. Схема БД
 
-### Уровень A: Feedback Collection
+### core
+- `conversations` — диалоги
+- `messages` — сообщения
+- `patients` — карточки пациентов
+- `services` — услуги с ценами (из 1С, иерархия parentRef1cId)
+- `accounts` — Instagram Business аккаунты (токены зашифрованы)
 
-```
-Админ в панели:
-  ┌──────────────────────────────────┐
-  │ Вопрос: "Сколько стоит...?"       │
-  │ Ответ ИИ: "Цена 5000тг"          │ ← можно править inline
-  │ [✏ Править] [👍 OK] [👎 Bad]     │
-  └──────────────────────────────────┘
-
-Исправление → сохраняется в response_feedback
-```
-
-### Уровень B: Response Override
-
-При повторном похожем запросе:
-
-- Если есть `response_feedback` со статусом `applied` → Learning Store уже содержит исправление
-- Если `pending` → подмешиваем `corrected_response` в контекст промпта
-
-### Уровень C: KB Suggestion Pipeline
-
-```
-BullMQ cron (еженощно или по триггеру):
-  1. Собрать response_feedback со статусом pending (N+)
-  2. Семантическая кластеризация по embedding similarity
-  3. Для каждого кластера: LLM → формулирует документ
-  4. Сохранить как kb_suggestion (status: pending)
-
-Админ видит:
-  📄 Предложение #42: "Цены на лазерную эпиляцию"
-  [Редактировать] [Добавить в Learning Store] [Отклонить]
-
-При подтверждении:
-  → Создать документ в learning_docs
-  → Чанкинг → эмбеддинги → learn_chunks
-  → Статус → applied
-```
-
-### Уровень D: Rollback Learning
-
-```
-POST /api/admin/learning/rollback
-  → DELETE FROM learn_chunks
-  → DELETE FROM learning_docs
-  → RAG Store работает как раньше, ничего не сломано
-```
-
----
-
-## 4. Схема БД (новые таблицы)
-
-### response_feedback
-
-| Колонка            | Тип       | Описание                     |
-| ------------------ | --------- | ---------------------------- |
-| id                 | bigint PK |                              |
-| response_id        | text      | UUID ответа                  |
-| conversation_id    | bigint FK |                              |
-| session_id         | text      | Группа исправлений           |
-| query              | text      | Исходный вопрос юзера        |
-| original_response  | text      | Что сказал ИИ                |
-| corrected_response | text      | Что исправил админ           |
-| correction_reason  | text      | Почему                       |
-| source             | text      | admin / auto                 |
-| status             | text      | pending / applied / rejected |
-| metadata           | jsonb     | Модель, chunks, агент        |
-| created_at         | timestamp |                              |
-
-### kb_suggestions
-
-| Колонка             | Тип                       | Описание                                |
-| ------------------- | ------------------------- | --------------------------------------- |
-| id                  | bigint PK                 |                                         |
-| title               | text                      | Заголовок документа                     |
-| content             | text                      | Сгенерированный LLM контент             |
-| source_feedback_ids | jsonb                     | Ссылки на исходные исправления          |
-| status              | text                      | pending / approved / rejected / applied |
-| target_document_id  | bigint FK → learning_docs |                                         |
-| confidence          | float                     | 0–1                                     |
-| generated_by        | text                      | Модель                                  |
-| reviewed_at         | timestamp                 |                                         |
-| created_at          | timestamp                 |                                         |
-
-### learning_docs
-
-| Колонка             | Тип                     | Описание                   |
-| ------------------- | ----------------------- | -------------------------- |
-| id                  | bigint PK               |                            |
-| title               | text NOT NULL           |                            |
-| source              | text DEFAULT 'learning' |                            |
-| source_feedback_ids | jsonb                   | Какие исправления породили |
-| confidence          | float                   | 0–1 уверенность генерации  |
-| metadata            | jsonb                   |                            |
-| created_at          | timestamp               |                            |
-
-### learn_chunks
-
-| Колонка     | Тип                       | Описание             |
-| ----------- | ------------------------- | -------------------- |
-| id          | bigint PK                 |                      |
-| document_id | bigint FK → learning_docs | Cascade delete       |
-| index       | int NOT NULL              | Порядок чанка        |
-| text        | text NOT NULL             |                      |
-| embedding   | vector(3072)              |                      |
-| tsv         | tsvector                  | Полнотекстовый поиск |
-| metadata    | jsonb                     |                      |
-| created_at  | timestamp                 |                      |
-
-Структура `learning_docs`/`learn_chunks` идентична `documents`/`chunks`. Отличие — семантика и вес при поиске.
+### learning
+- `response_feedback` — исправления админа
+- `kb_suggestions` — предложения в БЗ
+- `learning_docs` / `learn_chunks` — авто-сгенерированные документы
 
 ---
 
 ## 5. Booking Agent
 
-При интенте `booking`:
-
-1. Собрать: услуга, врач, дата/время, имя, телефон
-2. Использовать Tool Agent для получения цен, врачей, расписания
-3. Сформировать объект записи
-4. Эмуляция: залогировать полные данные, `has_booked_consultation = true`
-5. Ответ юзеру: "Вы записаны! (тестовый режим)"
-
-Готов к интеграции с реальной внешней системой — замена одного вызова.
+Собирает: услуга, врач, дата/время, имя, телефон, филиал.
+Использует `get_doctor_schedule` для сверки расписания.
+Эмуляция: логирует данные, `has_booked_consultation = true`.
+Готов к интеграции с внешней API.
 
 ---
 
 ## 6. Фоновые задачи (BullMQ + Redis)
 
-- **process-correction**: извлечение сути исправления (LLM), поиск похожих (embedding), группировка
-- **generate-kb-suggestions**: сбор pending фидбеков, кластеризация, генерация документов (еженощно или по триггеру)
-- **apply-suggestion**: чанкинг, эмбеддинги, запись в learning store
+- `process-correction` — извлечение сути исправления, кластеризация
+- `generate-kb-suggestions` — сбор pending фидбеков → кластеризация → генерация
+- `apply-suggestion` — чанкинг → эмбеддинги → learning store
 
 ---
 
-## 7. Admin API (learning endpoints)
+## 7. Admin API
 
-| Endpoint                                        | Описание                             |
-| ----------------------------------------------- | ------------------------------------ |
-| `GET /api/admin/feedback`                       | Список фидбеков (пагинация, фильтры) |
-| `POST /api/admin/feedback/:id/correct`          | Исправить ответ                      |
-| `POST /api/admin/feedback/batch-cluster`        | Запустить кластеризацию              |
-| `GET /api/admin/kb-suggestions`                 | Список предложений в БЗ              |
-| `POST /api/admin/kb-suggestions/:id/approve`    | Подтвердить                          |
-| `POST /api/admin/kb-suggestions/:id/reject`     | Отклонить                            |
-| `GET /api/admin/learning-stats`                 | Статистика дашборда                  |
-| `POST /api/admin/learning/generate-suggestions` | Форсировать генерацию                |
-| `POST /api/admin/learning/toggle`               | Вкл/выкл Learning Store              |
-| `POST /api/admin/learning/rollback`             | Очистить Learning Store              |
-
-**learning-stats возвращает:**
-
-```json
-{
-    "totalCorrections": 142,
-    "pendingFeedback": 23,
-    "pendingSuggestions": 5,
-    "appliedDocuments": 12,
-    "ragChunksCount": 450,
-    "learnChunksCount": 38,
-    "learningEnabled": true,
-    "topicsHeatmap": [
-        { "topic": "цены", "count": 34 },
-        { "topic": "лазерная эпиляция", "count": 18 }
-    ],
-    "dailyTrend": [{ "date": "2026-07-01", "corrections": 5, "approved": 2 }]
-}
-```
+| Endpoint | Описание |
+|----------|----------|
+| `GET /api/admin/feedback` | Список фидбеков |
+| `POST /api/admin/feedback/:id/correct` | Исправить ответ |
+| `GET /api/admin/kb-suggestions` | Предложения в БЗ |
+| `POST /api/admin/kb-suggestions/:id/approve` | Подтвердить |
+| `POST /api/admin/learning/generate-suggestions` | Форсировать генерацию |
+| `POST /api/admin/learning/toggle` | Вкл/выкл Learning Store |
+| `POST /api/admin/learning/rollback` | Очистить Learning Store |
 
 ---
 
@@ -281,80 +186,66 @@ POST /api/admin/learning/rollback
 src/
 ├── agents/
 │   ├── orchestrator/
-│   │   └── index.ts           ← runPipeline v2
+│   │   ├── index.ts       ← итеративный runPipeline
+│   │   └── synthesis.ts   ← финальная LLM-сборка ответа
 │   ├── conversation/
-│   │   ├── index.ts
-│   │   └── prompts.ts
+│   │   └── index.ts
 │   ├── rag/
-│   │   ├── index.ts
-│   │   └── service.ts
+│   │   └── index.ts
 │   ├── tool/
-│   │   ├── index.ts
-│   │   └── service.ts
+│   │   └── index.ts
 │   ├── booking/
-│   │   ├── index.ts
-│   │   ├── service.ts         ← эмуляция
-│   │   └── prompts.ts
+│   │   └── service.ts
 │   ├── objection/
-│   │   ├── index.ts
-│   │   └── prompts.ts
-│   └── learning/
-│       ├── index.ts
-│       ├── service.ts         ← feedback, suggestion
-│       ├── scheduler.ts       ← BullMQ worker
-│       ├── cluster.ts         ← semantic clustering
-│       └── prompts.ts
+│   │   └── index.ts
+│   ├── types.ts           ← AgentResult, Gap, PipelineState
+│   └── registry.ts        ← реестр агентов + selectNextAgent
 │
-├── lib/
-│   └── queue.ts               ← BullMQ setup
-│
-├── db/
-│   └── schema.ts              ← + response_feedback, kb_suggestions, learning_docs, learn_chunks
+├── services/
+│   ├── llm/               ← OpenRouter (chat, embeddings)
+│   ├── rag/               ← hybrid, intent, prompts, context, grounding
+│   └── tools/             ← prices, schedule, definitions
 │
 ├── modules/
-│   └── admin/
-│       └── index.ts           ← + learning endpoints
+│   ├── webhook/           ← Instagram webhook handler
+│   ├── auth/              ← Facebook OAuth
+│   ├── admin/             ← API endpoints
+│   └── health/
 │
-├── services/                   ← существующий код (постепенная миграция)
-│   ├── rag/                   → agents/rag/
-│   └── tools/                 → agents/tool/
+├── db/
+│   └── schema.ts
 │
-└── ...остальное без изменений
+├── app.ts                 ← Elysia bootstrap
+├── index.ts               ← точка входа
+└── router.ts              ← API router
 ```
 
 ---
 
 ## 9. Roadmap
 
-### Phase 1 — Foundation
-
+### Phase 1 — Foundation ✓
 - Redis + BullMQ в docker-compose
-- Реструктуризация в агенты (src/agents/)
 - Booking Agent (эмуляция)
-- Новые таблицы → db:generate → db:migrate
-- Admin endpoints: CRUD feedback
+- Admin endpoints
 
 ### Phase 2 — Learning Engine
-
 - BullMQ jobs: process-correction
 - BullMQ cron: generate-kb-suggestions
 - Response override в оркестраторе
-- Admin endpoints: KB suggestions + Learning Store toggle/rollback
 
-### Phase 3 — Dashboard
-
-- Learning dashboard stats endpoint
-
-### Phase 4 — Booking Integration
-
-- Замена эмуляции на реальную внешнюю API
+### Phase 3 — Booking Integration
+- Замена эмуляции на реальную API
 
 ---
 
 ## 10. Инфраструктура
 
-- **Redis** — через docker-compose (новый сервис)
-- **BullMQ** — пакеты `bullmq`, `ioredis`
-- **Очереди**: `corrections`, `suggestions`, `embeddings`
-- **Схема** — Drizzle ORM + pgvector
-
+- **Runtime:** Bun
+- **Framework:** ElysiaJS
+- **DB:** PostgreSQL + pgvector
+- **ORM:** Drizzle
+- **Validation:** Valibot + valibot-env
+- **LLM:** OpenRouter (gpt-4o-mini, claude-3.5-sonnet)
+- **Queues:** BullMQ + Redis
+- **Meta:** Instagram Graph API, Facebook Webhooks

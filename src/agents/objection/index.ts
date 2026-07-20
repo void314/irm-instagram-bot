@@ -3,6 +3,7 @@ import { log } from '../../services/logger'
 import { type PatientInfo } from '../../services/rag/patient'
 import { OBJECTION_SCRIPTS, SYSTEM_PROMPT_OBJECTION } from '../../services/rag/prompts'
 import { executeTool, getToolDefinitions } from '../../services/tools'
+import type { AgentResult } from '../types'
 
 function injectPrompt(template: string, replacements: Record<string, string>): string {
     let result = template
@@ -28,7 +29,7 @@ export async function checkAndHandleObjection(
     patientStr: string,
     patient: PatientInfo | null,
     history: string
-): Promise<string | null> {
+): Promise<AgentResult | null> {
     log.info({ module: 'agent:objection', query: query.slice(0, 60) }, 'Handling objection')
 
     const lang = detectedLang === 'kk' ? 'kk' : detectedLang === 'en' ? 'en' : 'ru'
@@ -67,8 +68,8 @@ export async function checkAndHandleObjection(
 
         for (const tc of first.toolCalls) {
             try {
-                const result = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
-                toolMessages.push({ role: 'tool', content: result, tool_call_id: tc.id })
+                const toolResult = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
+                toolMessages.push({ role: 'tool', content: toolResult.answer, tool_call_id: tc.id })
             } catch (err) {
                 toolMessages.push({ role: 'tool', content: `Ошибка: ${String(err)}`, tool_call_id: tc.id })
             }
@@ -80,5 +81,6 @@ export async function checkAndHandleObjection(
         answer = first.content || ''
     }
 
-    return answer
+    if (!answer) return null
+    return { content: answer, confidence: 'high', gaps: [] }
 }
