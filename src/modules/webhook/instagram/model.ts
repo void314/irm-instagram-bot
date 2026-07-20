@@ -5,10 +5,21 @@ const instagramUserRef = v.object({
     username: v.optional(v.string())
 })
 
+const instagramAttachmentPayload = v.object({
+    url: v.optional(v.string()),
+    is_reusable: v.optional(v.boolean())
+})
+
+const instagramAttachment = v.object({
+    type: v.optional(v.string()),
+    payload: v.optional(instagramAttachmentPayload)
+})
+
 const instagramMessage = v.object({
     mid: v.optional(v.string()),
     text: v.optional(v.string()),
-    is_echo: v.optional(v.boolean())
+    is_echo: v.optional(v.boolean()),
+    attachments: v.optional(v.array(instagramAttachment))
 })
 
 export const webhookVerifyQuery = v.object({
@@ -43,7 +54,8 @@ export const instagramWebhookPayload = v.object({
                                     to: v.optional(instagramUserRef),
                                     message: v.optional(
                                         v.object({
-                                            text: v.optional(v.string())
+                                            text: v.optional(v.string()),
+                                            attachments: v.optional(v.array(instagramAttachment))
                                         })
                                     ),
                                     mid: v.optional(v.string()),

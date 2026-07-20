@@ -7,6 +7,7 @@ import { env } from '../../../config/constants'
 import { db } from '../../../db/client'
 import { accounts, conversations, messages } from '../../../db/schema'
 import { log } from '../../../services/logger'
+import { transcribeAudio } from '../../../services/transcription'
 import { ensurePatient, fetchInstagramUserInfo, updatePatient } from '../../../services/rag/patient'
 import { TokenService } from '../../tokens'
 import type {
@@ -236,13 +237,40 @@ export class InstagramWebhookService {
             return
         }
 
+        let finalText = text ?? null
+        let messageMetadata: Record<string, unknown> | undefined
+
+        if (!finalText) {
+            const attachments = message.attachments || []
+            const audioAttachment = attachments.find((a) => a.type === 'audio')
+
+            if (audioAttachment?.payload?.url && env.INSTAGRAM_BUSINESS_ID) {
+                try {
+                    const pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
+                    if (pageToken) {
+                        finalText = await transcribeAudio(audioAttachment.payload.url, pageToken)
+                        messageMetadata = { type: 'voice', audioUrl: audioAttachment.payload.url }
+                        log.info(
+                            { module: 'webhook', senderId, transcriptLength: finalText.length },
+                            '[webhook] voice message transcribed'
+                        )
+                    }
+                } catch (err) {
+                    log.error(
+                        { module: 'webhook', senderId, error: String(err) },
+                        '[webhook] voice transcription failed'
+                    )
+                }
+            }
+        }
+
         const isBusinessRecipient =
             env.INSTAGRAM_BUSINESS_ID &&
             (recipientId === env.INSTAGRAM_BUSINESS_ID || entryId === env.INSTAGRAM_BUSINESS_ID)
 
         if (isBusinessRecipient) {
             log.info({ module: 'webhook', senderId, recipientId }, '[webhook] messaging event handled')
-            await this.handleIncomingMessage(senderId, text ?? null)
+            await this.handleIncomingMessage(senderId, finalText, messageMetadata)
         }
     }
 
@@ -266,13 +294,40 @@ export class InstagramWebhookService {
             return
         }
 
+        let finalText = text ?? null
+        let messageMetadata: Record<string, unknown> | undefined
+
+        if (!finalText) {
+            const attachments = change.value?.message?.attachments || []
+            const audioAttachment = attachments.find((a) => a.type === 'audio')
+
+            if (audioAttachment?.payload?.url && env.INSTAGRAM_BUSINESS_ID) {
+                try {
+                    const pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
+                    if (pageToken) {
+                        finalText = await transcribeAudio(audioAttachment.payload.url, pageToken)
+                        messageMetadata = { type: 'voice', audioUrl: audioAttachment.payload.url }
+                        log.info(
+                            { module: 'webhook', senderId, transcriptLength: finalText.length },
+                            '[webhook] voice message transcribed'
+                        )
+                    }
+                } catch (err) {
+                    log.error(
+                        { module: 'webhook', senderId, error: String(err) },
+                        '[webhook] voice transcription failed'
+                    )
+                }
+            }
+        }
+
         if (recipientId && env.INSTAGRAM_BUSINESS_ID && recipientId === env.INSTAGRAM_BUSINESS_ID) {
             log.info({ module: 'webhook', senderId, recipientId }, '[webhook] change event handled')
-            await this.handleIncomingMessage(senderId, text ?? null)
+            await this.handleIncomingMessage(senderId, finalText, messageMetadata)
         }
     }
 
-    private async handleIncomingMessage(senderId: string, text: string | null) {
+    private async handleIncomingMessage(senderId: string, text: string | null, messageMetadata?: Record<string, unknown>) {
         log.info(
             { module: 'webhook', senderId, hasText: !!text, textLength: text?.length ?? 0 },
             '[webhook] incoming message'
@@ -332,7 +387,8 @@ export class InstagramWebhookService {
             db.insert(messages).values({
                 conversationId: conv.id,
                 fromId: senderId,
-                text
+                text,
+                metadata: messageMetadata
             }).then(() => {
                 log.info({ module: 'webhook', conversationId: conv.id.toString() }, '[webhook] message stored')
             }).catch((err) => {

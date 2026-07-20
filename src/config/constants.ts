@@ -29,6 +29,7 @@ const env = createEnv({
             LLM_MODEL: v.optional(v.string(), 'openai/gpt-4o-mini'),
             EMBED_MODEL: v.optional(v.string(), 'google/gemini-embedding-2'),
             RAG_TOP_K: v.optional(v.number(), 5),
+            TRANSCRIPTION_MODEL: v.optional(v.string(), 'google/gemini-2.5-flash-lite'),
             EXTERNAL_API_BASE_URL: v.optional(v.string(), 'https://rk.etl.uzun.kz/api/v1')
         },
         shared: {
