@@ -27,6 +27,39 @@ interface DoctorsResponse {
 
 const API_BASE = env.EXTERNAL_API_BASE_URL || 'https://rk.etl.uzun.kz/api/v1'
 
+const STOP_WORDS = new Set(['врач', 'доктор', 'doctor', 'дәрігер', 'dr', 'doktor'])
+
+function levenshteinDistance(a: string, b: string): number {
+    const alen = a.length
+    const blen = b.length
+    if (alen === 0) return blen
+    if (blen === 0) return alen
+
+    if (alen > blen) return levenshteinDistance(b, a)
+
+    let prev = new Uint8Array(alen + 1)
+    let curr = new Uint8Array(alen + 1)
+
+    for (let i = 0; i <= alen; i++) prev[i] = i
+
+    for (let j = 1; j <= blen; j++) {
+        curr[0] = j
+        for (let i = 1; i <= alen; i++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1
+            curr[i] = Math.min(prev[i] + 1, curr[i - 1] + 1, prev[i - 1] + cost)
+        }
+        ;[prev, curr] = [curr, prev]
+    }
+
+    return prev[alen]
+}
+
+function fuzzyMatch(word: string, target: string): boolean {
+    if (target.length === 0) return false
+    const threshold = word.length >= 5 ? 2 : 1
+    return levenshteinDistance(word, target) <= threshold
+}
+
 function toLowerText(value: unknown): string {
     if (typeof value === 'string') return value.toLowerCase()
     if (value && typeof value === 'object') {
@@ -36,58 +69,114 @@ function toLowerText(value: unknown): string {
     return ''
 }
 
+function toLowerTextShort(value: unknown): string {
+    if (typeof value === 'string') return value.toLowerCase()
+    if (value && typeof value === 'object') {
+        const v = value as { name?: string; shortName?: string }
+        const text = v.shortName ?? v.name
+        if (typeof text === 'string') return text.toLowerCase()
+    }
+    return ''
+}
+
 function matchScore(doctor: MDoctor, queryWords: string[]): number {
     let score = 0
     const full = toLowerText(doctor.fullName)
-    const query = queryWords
-        .map((w) => w.trim().toLowerCase())
-        .filter((w) => w !== 'врач')
-        .join(' ')
+    const query = queryWords.join(' ')
 
     if (full === query) score += 100
     else if (full.startsWith(query)) score += 50
 
+    const firstName = toLowerText(doctor.firstName)
+    const lastName = toLowerText(doctor.lastName)
+    const middleName = toLowerText(doctor.middleName)
+    const position = toLowerText(doctor.position)
+    const positionShort = toLowerTextShort(doctor.position)
+    const deptName = toLowerText(doctor.department?.name)
+    const branchName = toLowerText(doctor.department?.branch?.name)
+
     for (const word of queryWords) {
         const w = word.toLowerCase()
-        if (full.includes(w)) score += 10
-        if (toLowerText(doctor.firstName).includes(w)) score += 5
-        if (toLowerText(doctor.lastName).includes(w)) score += 5
-        if (toLowerText(doctor.middleName).includes(w)) score += 5
-        if (toLowerText(doctor.position).includes(w)) score += 15
-        if (toLowerText(doctor.department?.name).includes(w)) score += 10
-        if (toLowerText(doctor.department?.branch?.name).includes(w)) score += 5
+        let exactHit = false
+
+        if (full.includes(w)) {
+            score += 10
+            exactHit = true
+        }
+        if (firstName.includes(w)) {
+            score += 5
+            exactHit = true
+        }
+        if (lastName.includes(w)) {
+            score += 5
+            exactHit = true
+        }
+        if (middleName.includes(w)) {
+            score += 5
+            exactHit = true
+        }
+        if (position.includes(w) || positionShort.includes(w)) {
+            score += 15
+            exactHit = true
+        }
+        if (deptName.includes(w)) {
+            score += 10
+            exactHit = true
+        }
+        if (branchName.includes(w)) {
+            score += 5
+            exactHit = true
+        }
+
+        if (!exactHit) {
+            if (fuzzyMatch(w, full)) score += 5
+            else if (fuzzyMatch(w, position) || fuzzyMatch(w, positionShort)) score += 8
+            else if (fuzzyMatch(w, deptName)) score += 5
+            else if (fuzzyMatch(w, branchName)) score += 3
+        }
     }
 
     return score
 }
 
-export async function findDoctor(query: string): Promise<MDoctor | null> {
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+async function fetchAllDoctors(): Promise<MDoctor[]> {
+    const allDoctors: MDoctor[] = []
+    let offset = 0
+    const limit = 50
+    let hasMore = true
+
+    while (hasMore) {
+        const res = await fetch(`${API_BASE}/doctors?limit=${limit}&offset=${offset}`, {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(10000)
+        })
+
+        if (!res.ok) {
+            log.error({ module: 'tools', status: res.status }, 'doctor search API error')
+            return allDoctors
+        }
+
+        const body = (await res.json()) as DoctorsResponse
+        if (!body.success || !body.data?.doctors) return allDoctors
+
+        allDoctors.push(...body.data.doctors)
+        hasMore = body.data.pagination?.hasMore ?? false
+        offset += limit
+    }
+
+    return allDoctors
+}
+
+export async function findDoctors(query: string, limit = 5): Promise<MDoctor[]> {
+    const words = query
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length > 0 && !STOP_WORDS.has(w))
+
+    if (words.length === 0) return []
 
     try {
-        const allDoctors: MDoctor[] = []
-        let offset = 0
-        const limit = 50
-        let hasMore = true
-
-        while (hasMore) {
-            const res = await fetch(`${API_BASE}/doctors?limit=${limit}&offset=${offset}`, {
-                headers: { Accept: 'application/json' },
-                signal: AbortSignal.timeout(10000)
-            })
-
-            if (!res.ok) {
-                log.error({ module: 'tools', status: res.status }, 'doctor search API error')
-                return null
-            }
-
-            const body = (await res.json()) as DoctorsResponse
-            if (!body.success || !body.data?.doctors) return null
-
-            allDoctors.push(...body.data.doctors)
-            hasMore = body.data.pagination?.hasMore ?? false
-            offset += limit
-        }
+        const allDoctors = await fetchAllDoctors()
 
         const scored = allDoctors
             .map((d) => ({ doctor: d, score: matchScore(d, words) }))
@@ -96,9 +185,14 @@ export async function findDoctor(query: string): Promise<MDoctor | null> {
 
         log.info({ module: 'tools', query, matches: scored.length, total: allDoctors.length }, 'doctor search')
 
-        return scored.length > 0 ? scored[0].doctor : null
+        return scored.slice(0, limit).map((d) => d.doctor)
     } catch (err) {
         log.error({ module: 'tools', error: String(err) }, 'doctor search failed')
-        return null
+        return []
     }
+}
+
+export async function findDoctor(query: string): Promise<MDoctor | null> {
+    const doctors = await findDoctors(query, 1)
+    return doctors[0] ?? null
 }

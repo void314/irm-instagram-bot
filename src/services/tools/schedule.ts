@@ -1,6 +1,6 @@
 import { env } from '../../config/constants'
 import { log } from '../logger'
-import { type MDoctor, findDoctor } from './doctor-search'
+import { type MDoctor, findDoctors } from './doctor-search'
 import type { Tool, ToolResult } from './types'
 
 const API_BASE = env.EXTERNAL_API_BASE_URL || 'https://rk.etl.uzun.kz/api/v1'
@@ -55,8 +55,8 @@ const DAY_NAMES_SHORT: Record<number, string> = {
     0: 'вс'
 }
 
-function formatSchedule(doctor: MDoctor, schedule: ScheduleDay[]): string {
-    const lines: string[] = [`Расписание врача ${doctor.fullName} на текущую неделю:`, '']
+function formatScheduleDays(schedule: ScheduleDay[]): string {
+    const lines: string[] = []
 
     for (const day of schedule) {
         const dayName = DAY_NAMES_SHORT[day.dayOfWeek] || ''
@@ -81,74 +81,111 @@ function formatSchedule(doctor: MDoctor, schedule: ScheduleDay[]): string {
     return lines.join('\n')
 }
 
+function formatSchedule(doctor: MDoctor, schedule: ScheduleDay[]): string {
+    const header = `Расписание врача ${doctor.fullName} на текущую неделю:`
+    const consultPrice = doctor.consultPrice
+        ? `\n\nСтоимость консультации: ${Number(doctor.consultPrice).toLocaleString('ru-RU')} ₸`
+        : ''
+    return `${header}\n\n${formatScheduleDays(schedule)}${consultPrice}`
+}
+
+function hasFreeSlots(schedule: ScheduleDay[]): boolean {
+    return schedule.some((day) => day.isWorkDay && day.workPeriods.some((p) => p.timeType !== 'busy'))
+}
+
+async function fetchScheduleRaw(doctor: MDoctor): Promise<ScheduleDay[] | null> {
+    const monday = getMondayOfCurrentWeek()
+    const sunday = new Date(monday)
+    sunday.setDate(sunday.getDate() + 6)
+
+    try {
+        const url = `${API_BASE}/doctors/${doctor.id}/schedule?from=${formatDate(monday)}&to=${formatDate(sunday)}`
+        const res = await fetch(url, {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(10000)
+        })
+
+        if (!res.ok) {
+            log.error({ module: 'tools', status: res.status, doctorId: doctor.id }, 'schedule API error')
+            return null
+        }
+
+        const body = (await res.json()) as ScheduleResponse
+        if (!body.success || !body.data) return null
+
+        return body.data.schedule || []
+    } catch (err) {
+        log.error({ module: 'tools', error: String(err) }, 'schedule fetch failed')
+        return null
+    }
+}
+
 export const scheduleTool: Tool = {
     name: 'schedule',
 
     async execute(args: Record<string, unknown>): Promise<ToolResult> {
         const query = String(args.doctor_name ?? args.query ?? '').trim()
-        const doctor = await findDoctor(query)
 
-        if (!doctor) {
+        const doctors = await findDoctors(query, 5)
+
+        if (doctors.length === 0) {
             return {
                 success: true,
+                found: false,
                 answer:
                     'К сожалению, я не нашла врача по Вашему запросу. ' +
                     'Попробуйте уточнить фамилию или специальность врача.'
             }
         }
 
-        if (!doctor.isCalendarActive) {
+        const skipNotes: string[] = []
+
+        for (const doctor of doctors) {
+            if (!doctor.isCalendarActive) {
+                skipNotes.push(`Врач ${doctor.fullName} временно не ведёт приём.`)
+                continue
+            }
+
+            const schedule = await fetchScheduleRaw(doctor)
+            if (schedule === null) {
+                skipNotes.push(`У врача ${doctor.fullName} не удалось загрузить расписание.`)
+                continue
+            }
+
+            if (hasFreeSlots(schedule)) {
+                let answer = formatSchedule(doctor, schedule)
+                if (skipNotes.length > 0) {
+                    const notes = skipNotes.join('\n')
+                    answer = `${notes}\n\nНо ${doctor.firstName || doctor.fullName} может принять:\n\n${answer}`
+                }
+                return { success: true, found: true, answer }
+            }
+
+            skipNotes.push(`У врача ${doctor.fullName} на этой неделе нет свободного времени.`)
+        }
+
+        if (skipNotes.length === 1) {
+            const note = skipNotes[0]
+            if (note.includes('не ведёт приём')) {
+                return {
+                    success: true,
+                    found: false,
+                    answer: `${note} Пожалуйста, выберите другого специалиста.`
+                }
+            }
             return {
                 success: true,
-                answer:
-                    `Врач ${doctor.fullName} временно не ведёт приём. ` +
-                    'Пожалуйста, выберите другого специалиста.'
+                found: false,
+                answer: `${note} Попробуйте обратиться позже или запишитесь через кол-центр.`
             }
         }
 
-        const monday = getMondayOfCurrentWeek()
-        const sunday = new Date(monday)
-        sunday.setDate(sunday.getDate() + 6)
-
-        try {
-            const url = `${API_BASE}/doctors/${doctor.id}/schedule?from=${formatDate(monday)}&to=${formatDate(sunday)}`
-            const res = await fetch(url, {
-                headers: { Accept: 'application/json' },
-                signal: AbortSignal.timeout(10000)
-            })
-
-            if (!res.ok) {
-                log.error({ module: 'tools', status: res.status, doctorId: doctor.id }, 'schedule API error')
-                return {
-                    success: true,
-                    answer: 'Не удалось получить расписание. Попробуйте позже или запишитесь через кол-центр.'
-                }
-            }
-
-            const body = (await res.json()) as ScheduleResponse
-            if (!body.success || !body.data) {
-                return {
-                    success: true,
-                    answer: 'Не удалось загрузить расписание. Попробуйте позже.'
-                }
-            }
-
-            const schedule = body.data.schedule || []
-            const formatted = formatSchedule(doctor, schedule)
-            const consultPrice = doctor.consultPrice
-                ? `\n\nСтоимость консультации: ${Number(doctor.consultPrice).toLocaleString('ru-RU')} ₸`
-                : ''
-
-            return {
-                success: true,
-                answer: `${formatted}${consultPrice}`
-            }
-        } catch (err) {
-            log.error({ module: 'tools', error: String(err) }, 'schedule fetch failed')
-            return {
-                success: true,
-                answer: 'Не удалось загрузить расписание. Попробуйте позже.'
-            }
+        return {
+            success: true,
+            found: false,
+            answer:
+                'К сожалению, у всех найденных врачей нет свободного времени на этой неделе:\n' +
+                skipNotes.join('\n')
         }
     }
 }
