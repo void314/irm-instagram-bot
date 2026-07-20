@@ -7,7 +7,7 @@ import { env } from '../../../config/constants'
 import { db } from '../../../db/client'
 import { accounts, conversations, messages } from '../../../db/schema'
 import { log } from '../../../services/logger'
-import { transcribeAudio } from '../../../services/transcription'
+import { transcribeAudio, describeImage } from '../../../services/transcription'
 import { ensurePatient, fetchInstagramUserInfo, updatePatient } from '../../../services/rag/patient'
 import { TokenService } from '../../tokens'
 import type {
@@ -240,8 +240,10 @@ export class InstagramWebhookService {
         let finalText = text ?? null
         let messageMetadata: Record<string, unknown> | undefined
 
+        const attachments = message.attachments || []
+
+        // Audio transcription
         if (!finalText) {
-            const attachments = message.attachments || []
             const audioAttachment = attachments.find((a) => a.type === 'audio')
 
             if (audioAttachment?.payload?.url && env.INSTAGRAM_BUSINESS_ID) {
@@ -261,6 +263,36 @@ export class InstagramWebhookService {
                         '[webhook] voice transcription failed'
                     )
                 }
+            }
+        }
+
+        // Image description
+        const imageAttachment = attachments.find((a) => a.type === 'image')
+        if (imageAttachment?.payload?.url && env.INSTAGRAM_BUSINESS_ID) {
+            try {
+                const pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
+                if (pageToken) {
+                    const description = await describeImage(imageAttachment.payload.url, pageToken)
+                    const imageMeta = { type: 'image', imageUrl: imageAttachment.payload.url }
+
+                    if (finalText) {
+                        finalText = `${finalText}\n\n[User also sent an image: ${description}]`
+                        messageMetadata = { ...(messageMetadata || {}), ...imageMeta }
+                    } else {
+                        finalText = description
+                        messageMetadata = imageMeta
+                    }
+
+                    log.info(
+                        { module: 'webhook', senderId, descriptionLength: description.length },
+                        '[webhook] image described'
+                    )
+                }
+            } catch (err) {
+                log.error(
+                    { module: 'webhook', senderId, error: String(err) },
+                    '[webhook] image description failed'
+                )
             }
         }
 
@@ -297,8 +329,10 @@ export class InstagramWebhookService {
         let finalText = text ?? null
         let messageMetadata: Record<string, unknown> | undefined
 
+        const attachments = change.value?.message?.attachments || []
+
+        // Audio transcription
         if (!finalText) {
-            const attachments = change.value?.message?.attachments || []
             const audioAttachment = attachments.find((a) => a.type === 'audio')
 
             if (audioAttachment?.payload?.url && env.INSTAGRAM_BUSINESS_ID) {
@@ -318,6 +352,36 @@ export class InstagramWebhookService {
                         '[webhook] voice transcription failed'
                     )
                 }
+            }
+        }
+
+        // Image description
+        const imageAttachment = attachments.find((a) => a.type === 'image')
+        if (imageAttachment?.payload?.url && env.INSTAGRAM_BUSINESS_ID) {
+            try {
+                const pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
+                if (pageToken) {
+                    const description = await describeImage(imageAttachment.payload.url, pageToken)
+                    const imageMeta = { type: 'image', imageUrl: imageAttachment.payload.url }
+
+                    if (finalText) {
+                        finalText = `${finalText}\n\n[User also sent an image: ${description}]`
+                        messageMetadata = { ...(messageMetadata || {}), ...imageMeta }
+                    } else {
+                        finalText = description
+                        messageMetadata = imageMeta
+                    }
+
+                    log.info(
+                        { module: 'webhook', senderId, descriptionLength: description.length },
+                        '[webhook] image described'
+                    )
+                }
+            } catch (err) {
+                log.error(
+                    { module: 'webhook', senderId, error: String(err) },
+                    '[webhook] image description failed'
+                )
             }
         }
 

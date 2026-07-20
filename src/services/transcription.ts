@@ -1,5 +1,7 @@
 import { env } from '../config/constants'
 import { log } from './logger'
+import type { MultimodalContent } from './llm/openrouter'
+import { chat } from './llm/openrouter'
 
 function detectFormat(url: string, contentType: string | null): string {
     if (contentType) {
@@ -91,4 +93,45 @@ export async function transcribeAudio(
     }
 
     return transcript.trim()
+}
+
+export async function describeImage(
+    imageUrl: string,
+    pageAccessToken: string
+): Promise<string> {
+    const response = await fetch(imageUrl, {
+        headers: { Authorization: `Bearer ${pageAccessToken}` }
+    })
+
+    if (!response.ok) {
+        throw new Error(`Image download failed: ${response.status} ${response.statusText}`)
+    }
+
+    const buffer = await response.arrayBuffer()
+    const contentType = response.headers.get('content-type') || 'image/jpeg'
+
+    log.debug(
+        { module: 'vision', contentType, sizeBytes: buffer.byteLength },
+        'Image downloaded'
+    )
+
+    const content: MultimodalContent[] = [
+        {
+            type: 'text',
+            text: 'Describe what is shown in this image in detail. Be specific about what you see.'
+        },
+        {
+            type: 'image_url',
+            image_url: {
+                url: `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`
+            }
+        }
+    ]
+
+    const result = await chat(
+        [{ role: 'user', content }],
+        { model: env.VISION_MODEL, max_tokens: 512, temperature: 0.3 }
+    )
+
+    return result.content.trim()
 }

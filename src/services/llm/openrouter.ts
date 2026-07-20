@@ -48,8 +48,12 @@ function getHeaders(): Record<string, string> {
     }
 }
 
+export type MultimodalContent =
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'auto' } }
+
 export type ChatMessage =
-    | { role: 'system' | 'user'; content: string }
+    | { role: 'system' | 'user'; content: string | MultimodalContent[] }
     | { role: 'assistant'; content: string | null; tool_calls?: ToolCall[] }
     | { role: 'tool'; content: string; tool_call_id: string }
 

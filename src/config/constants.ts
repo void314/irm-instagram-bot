@@ -30,6 +30,7 @@ const env = createEnv({
             EMBED_MODEL: v.optional(v.string(), 'google/gemini-embedding-2'),
             RAG_TOP_K: v.optional(v.number(), 5),
             TRANSCRIPTION_MODEL: v.optional(v.string(), 'google/gemini-2.5-flash-lite'),
+            VISION_MODEL: v.optional(v.string(), 'google/gemini-2.5-flash'),
             EXTERNAL_API_BASE_URL: v.optional(v.string(), 'https://rk.etl.uzun.kz/api/v1')
         },
         shared: {
