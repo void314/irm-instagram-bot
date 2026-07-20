@@ -57,12 +57,9 @@ const GREETING_SHORT: Record<'ru' | 'kk' | 'en', string> = {
 }
 
 const GREETING_NAMED: Record<'ru' | 'kk' | 'en', (name: string) => string> = {
-    ru: (name) =>
-        `Здравствуйте ${name}, AI-консультант IRM-Clinic Айгерим. Чем я могу Вам помочь?`,
-    kk: (name) =>
-        `Сәлеметсіз бе ${name}, AI-консультант IRM-Clinic Айгерим. Сізге қалай көмектесе аламын?`,
-    en: (name) =>
-        `Hello ${name}, AI consultant at IRM-Clinic, Aigerim. How can I help you?`
+    ru: (name) => `Здравствуйте ${name}, AI-консультант IRM-Clinic Айгерим. Чем я могу Вам помочь?`,
+    kk: (name) => `Сәлеметсіз бе ${name}, AI-консультант IRM-Clinic Айгерим. Сізге қалай көмектесе аламын?`,
+    en: (name) => `Hello ${name}, AI consultant at IRM-Clinic, Aigerim. How can I help you?`
 }
 
 const GREETING_CONTINUATION: Record<'ru' | 'kk' | 'en', (name: string) => string> = {
@@ -78,12 +75,6 @@ const NAME_ACKNOWLEDGE: Record<'ru' | 'kk' | 'en', (name: string) => string> = {
         `Сізбен танысқаныма қуаныштымын, ${name}! Сізді IRM Clinic-ке не алып келгенін айтыңызшы? Емдеу бағдарламалары, қызмет бағалары туралы айтып бере аламын немесе кеңеске жаза аламын.`,
     en: (name) =>
         `Nice to meet you, ${name}! Tell me, what brought you to IRM Clinic? I can tell you about treatment programs, service prices, or book you for a consultation.`
-}
-
-export const NUDGE_RESPONSES: Record<'ru' | 'kk' | 'en', string> = {
-    ru: 'Могу я записать Вас на консультацию к врачу-репродуктологу в IRM Clinic? Специалист поможет подобрать программу индивидуально для Вас. Какой день Вам будет удобен?',
-    kk: 'Сізді IRM Clinic-те репродуктолог дәрігердің кеңесіне жазуыма бола ма? Маман сізге жеке бағдарлама таңдауға көмектеседі. Қай күн сізге ыңғайлы болады?',
-    en: 'May I book you for a consultation with a reproductive specialist at IRM Clinic? The doctor will help select a personalized program for you. What day would be convenient for you?'
 }
 
 export interface GreetingContext {

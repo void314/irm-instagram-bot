@@ -6,7 +6,7 @@ import {
     incrementMessageCount,
     updateConversationMetadata
 } from '../../services/rag/context'
-import { NUDGE_RESPONSES, detectIntentLLM } from '../../services/rag/intent'
+import { detectIntentLLM } from '../../services/rag/intent'
 import { detectLanguage } from '../../services/rag/language'
 import {
     type PatientInfo,
@@ -24,19 +24,12 @@ import { handlePriceIntent } from '../tool'
 import type { AgentResult, Gap, PipelineState } from '../types'
 import { synthesizeFinalAnswer } from './synthesis'
 
-const PRICES_BOOKING_CTA: Record<'ru' | 'kk' | 'en', string> = {
-    ru: 'Хотите, я запишу Вас на консультацию к врачу? Так Вы получите точную стоимость и подходящую именно Вам программу.',
-    kk: 'Дәрігердің кеңесіне жазып қоюымды қалайсыз ба? Осылай сіз нақты құн мен өзіңізге сай бағдарламаны біле аласыз.',
-    en: 'Would you like me to book you for a doctor consultation? That way you will get an exact price and a program tailored to you.'
-}
-
 const BOOKING_DECLINE_RESPONSE: Record<'ru' | 'kk' | 'en', string> = {
     ru: 'Хорошо, если передумаете — обращайтесь!',
     kk: 'Жақсы, егер ойыңыз өзгерсе — хабарласыңыз!',
     en: 'Alright, if you change your mind — feel free to reach out!'
 }
 
-const NUDGE_MESSAGE_THRESHOLD = 4
 const MAX_PIPELINE_ITERATIONS = 3
 
 export interface RagContext {
@@ -61,23 +54,6 @@ export interface RagResponse {
     intent: string
     needsClarification: boolean
     debug?: RagDebug
-}
-
-async function maybeAppendNudge(
-    answer: string,
-    patient: PatientInfo | null,
-    context: RagContext | undefined,
-    messageCount: number,
-    lang: 'ru' | 'kk' | 'en'
-): Promise<string> {
-    if (!context || !patient) return answer
-    if (patient.hasBookedConsultation || patient.bookingNudgeOffered) return answer
-    if (messageCount < NUDGE_MESSAGE_THRESHOLD) return answer
-
-    await updatePatient(context.senderId, { bookingNudgeOffered: true })
-    log.info({ module: 'orchestrator', senderId: context.senderId }, 'Booking nudge appended')
-
-    return `${answer}\n\n${NUDGE_RESPONSES[lang]}`
 }
 
 function buildDialogueForExtraction(query: string, history: string, answer: string): string {
@@ -366,49 +342,64 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         }
     }
 
-    // Filter empty content and synthesize
-    const nonEmptyContent = state.accumulatedContent.filter((c) => c.length > 0)
-    let finalAnswer: string
-    if (nonEmptyContent.length === 0) {
-        finalAnswer = 'Извините, не удалось найти информацию.'
-    } else if (
-        nonEmptyContent.length === 1 &&
-        nonEmptyContent[0].trim().length < 200 &&
-        nonEmptyContent[0].trim().endsWith('?')
-    ) {
-        // Уточняющий вопрос от tool (филиал/гражданство) — вернуть как есть
-        finalAnswer = nonEmptyContent[0]
-    } else {
-        finalAnswer = await synthesizeFinalAnswer(query, nonEmptyContent, effectiveLang, patientStr, history)
-    }
-
-    const personalized = personalizeAnswer(finalAnswer, patient)
-    let answer = context ? await appendNameQuestion(personalized, patient, context.senderId) : personalized
-
-    // CTA: prices → booking suggestion once per conversation
-    // Skip if the tool agent asked for clarifying info (branch/citizenship) — confidence:'low'
-    if (
+    // Compute post-processing flags (passed into synthesis for natural integration)
+    const patientName = patient?.name || null
+    const askForName = !!(patient && !patient.name && !patient.nameChangeOffered)
+    const shouldSuggestBooking = !!(
         context &&
         intentResult.type === 'prices' &&
         patient &&
         !patient.hasBookedConsultation &&
         !patient.bookingNudgeOffered &&
         primaryConfidence !== 'low'
+    )
+    const shouldNudgeBooking = !!(
+        context &&
+        intentResult.type === 'query' &&
+        patient &&
+        !patient.hasBookedConsultation &&
+        !patient.bookingNudgeOffered &&
+        messageCount >= 4
+    )
+
+    // Filter empty content and synthesize
+    const nonEmptyContent = state.accumulatedContent.filter((c) => c.length > 0)
+    let answer: string
+    if (nonEmptyContent.length === 0) {
+        answer = 'Извините, не удалось найти информацию.'
+    } else if (
+        nonEmptyContent.length === 1 &&
+        nonEmptyContent[0].trim().length < 200 &&
+        nonEmptyContent[0].trim().endsWith('?')
     ) {
-        await updatePatient(context.senderId, { bookingNudgeOffered: true })
-        answer = `${answer}\n\n${PRICES_BOOKING_CTA[effectiveLang]}`
+        // Уточняющий вопрос от tool (филиал/гражданство) — вернуть как есть, без пост-обработки
+        answer = nonEmptyContent[0]
+    } else {
+        answer = await synthesizeFinalAnswer(
+            query,
+            nonEmptyContent,
+            effectiveLang,
+            patientStr,
+            history,
+            patientName,
+            shouldSuggestBooking,
+            shouldNudgeBooking,
+            askForName
+        )
     }
 
-    // Nudge: query only, threshold-based
-    if (intentResult.type === 'query') {
-        answer = await maybeAppendNudge(answer, patient, context, messageCount, effectiveLang)
-    }
-
+    // DB side-effects for flags that were passed to synthesis
     if (context) {
+        if (shouldSuggestBooking || shouldNudgeBooking) {
+            await updatePatient(context.senderId, { bookingNudgeOffered: true })
+        }
+        if (askForName) {
+            await updatePatient(context.senderId, { nameChangeOffered: true })
+        }
         await incrementMessageCount(context.conversationId)
 
         // Extract patient data only from substantive (non-clarifying) answers
-        const isClarifying = finalAnswer.length < 100 && finalAnswer.trim().endsWith('?')
+        const isClarifying = answer.length < 100 && answer.trim().endsWith('?')
         if (!isClarifying) {
             await extractPatientData(query, history || 'нет', answer, patient, context.senderId)
         }
