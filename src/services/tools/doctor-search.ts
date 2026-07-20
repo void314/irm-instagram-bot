@@ -39,7 +39,10 @@ function toLowerText(value: unknown): string {
 function matchScore(doctor: MDoctor, queryWords: string[]): number {
     let score = 0
     const full = toLowerText(doctor.fullName)
-    const query = queryWords.join(' ').toLowerCase()
+    const query = queryWords
+        .map((w) => w.trim().toLowerCase())
+        .filter((w) => w !== 'врач')
+        .join(' ')
 
     if (full === query) score += 100
     else if (full.startsWith(query)) score += 50
