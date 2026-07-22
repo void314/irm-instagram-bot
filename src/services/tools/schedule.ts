@@ -45,25 +45,23 @@ function formatDate(d: Date): string {
     return d.toISOString().slice(0, 10)
 }
 
-const DAY_NAMES_SHORT: Record<number, string> = {
-    1: 'пн',
-    2: 'вт',
-    3: 'ср',
-    4: 'чт',
-    5: 'пт',
-    6: 'сб',
-    0: 'вс'
+// Полное название дня недели + число и месяц выводим ОДНОЙ строкой, вычисляя их
+// из самой даты (day.date), а не из поля dayOfWeek API — так день недели и число
+// физически не могут разойтись, и LLM не приходится самой сопоставлять сокращения
+// (пн/вт/ср) с частичными датами (MM-DD), что было источником путаницы дат.
+function formatDayLabel(dateStr: string): string {
+    const d = new Date(`${dateStr}T00:00:00`)
+    return d.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })
 }
 
 function formatScheduleDays(schedule: ScheduleDay[]): string {
     const lines: string[] = []
 
     for (const day of schedule) {
-        const dayName = DAY_NAMES_SHORT[day.dayOfWeek] || ''
-        const dateStr = day.date.slice(5)
+        const label = formatDayLabel(day.date)
 
         if (!day.isWorkDay || day.workPeriods.length === 0) {
-            lines.push(`${dayName} ${dateStr} — выходной`)
+            lines.push(`${label} — выходной`)
             continue
         }
 
@@ -72,9 +70,9 @@ function formatScheduleDays(schedule: ScheduleDay[]): string {
             .map((p) => `${p.startTime.slice(0, 5)}–${p.endTime.slice(0, 5)}`)
 
         if (periods.length === 0) {
-            lines.push(`${dayName} ${dateStr} — нет свободного времени`)
+            lines.push(`${label} — нет свободного времени`)
         } else {
-            lines.push(`${dayName} ${dateStr}: ${periods.join(', ')}`)
+            lines.push(`${label}: ${periods.join(', ')}`)
         }
     }
 

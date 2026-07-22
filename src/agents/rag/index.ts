@@ -6,7 +6,7 @@ import { type GroundingResult, checkGrounding } from '../../services/rag/groundi
 import { hybridSearch } from '../../services/rag/hybrid'
 import { findPendingOverrides } from '../../services/rag/override'
 import { type PatientInfo } from '../../services/rag/patient'
-import { SYSTEM_PROMPT_NO_CONTEXT, SYSTEM_PROMPT_WITH_CONTEXT } from '../../services/rag/prompts'
+import { DATA_PROMPT_NO_CONTEXT, DATA_PROMPT_WITH_CONTEXT } from '../../services/rag/prompts'
 import { resolveSearchQueries } from '../../services/rag/query-rewrite'
 import { executeTool, getToolDefinitions } from '../../services/tools'
 import { type RagDebug } from '../orchestrator'
@@ -148,9 +148,9 @@ export async function processRagQuery(
         }
 
         const systemMsg =
-            injectPrompt(SYSTEM_PROMPT_NO_CONTEXT, baseReplacements) +
+            injectPrompt(DATA_PROMPT_NO_CONTEXT, baseReplacements) +
             overrideStr +
-            `\n\nВАЖНО: Итоговый ответ пользователю сформируй строго на языке: ${debug.language === 'kk' ? 'казахском' : debug.language === 'en' ? 'английском' : 'русском'}.`
+            `\n\nФакты излагай на языке: ${debug.language === 'kk' ? 'казахском' : debug.language === 'en' ? 'английском' : 'русском'}.`
         const { content: answer } = await callLlmWithTools(systemMsg)
         return { content: answer, confidence: 'partial', gaps: [] }
     }
@@ -171,22 +171,32 @@ export async function processRagQuery(
     }
 
     const systemPrompt =
-        injectPrompt(SYSTEM_PROMPT_WITH_CONTEXT, {
+        injectPrompt(DATA_PROMPT_WITH_CONTEXT, {
             ...baseReplacements,
             context: contextStr + overrideStr
         }) +
-        `\n\nВАЖНО: Итоговый ответ пользователю сформируй строго на языке: ${debug.language === 'kk' ? 'казахском' : debug.language === 'en' ? 'английском' : 'русском'}.`
+        `\n\nФакты излагай на языке: ${debug.language === 'kk' ? 'казахском' : debug.language === 'en' ? 'английском' : 'русском'}.`
 
     const { content: answer, usedTools } = await callLlmWithTools(systemPrompt)
 
     const grounding: GroundingResult = usedTools
         ? { passed: true, needsClarification: false }
-        : await checkGrounding(answer, searchResults, query)
+        : await checkGrounding(answer, searchResults)
 
     debug.groundingPassed = grounding.passed
 
-    if (grounding.needsClarification && grounding.clarificationQuestion) {
-        return { content: grounding.clarificationQuestion, confidence: 'partial', gaps: [] }
+    if (grounding.needsClarification) {
+        // Релевантность найденного контекста низкая — сообщаем об этом главному
+        // агенту как факт, а не как готовый вопрос. Сам он решит, как и что
+        // переспросить, с учётом истории диалога (чтобы не дублировать вопросы).
+        return {
+            content:
+                `Релевантность найденной информации по запросу пользователя низкая — ` +
+                `данных в базе знаний недостаточно для точного ответа. ` +
+                `Нужно уточнение у пользователя (например: тип программы, гражданство, этап лечения).`,
+            confidence: 'low',
+            gaps: []
+        }
     }
 
     return { content: answer, confidence: 'high', gaps: [] }

@@ -6,18 +6,15 @@ import { type PatientInfo, updatePatient } from '../../services/rag/patient'
 import { executeTool } from '../../services/tools'
 import type { AgentResult } from '../types'
 
-function buildBranchQuestion(lang: 'ru' | 'kk' | 'en'): string {
-    if (lang === 'kk') return `Клиника филиалын нақтылаңызшы.\nҚолжетімді филиалдар:\n${getBranchesList()}`
-    if (lang === 'en') return `Please specify the clinic branch.\nAvailable branches:\n${getBranchesList()}`
-    return `Пожалуйста, уточните филиал клиники.\nДоступные филиалы:\n${getBranchesList()}`
+// Эти функции возвращают НЕ готовый текст вопроса пользователю, а терсе data-заметку
+// для главного агента (оркестратора). Сам вопрос формулирует оркестратор — он видит
+// историю диалога и не будет повторно спрашивать/перечислять то, что уже говорил.
+function buildBranchDataNote(): string {
+    return `ТРЕБУЕТСЯ уточнение у пользователя: филиал клиники не указан. Доступные филиалы:\n${getBranchesList()}`
 }
 
-function buildCitizenshipQuestion(lang: 'ru' | 'kk' | 'en'): string {
-    if (lang === 'kk')
-        return 'Азаматтығыңызды көрсетуіңізді сұраймыз (ҚР азаматы немесе шетел азаматы) — қызметтердің құны өзгешеленеді.'
-    if (lang === 'en')
-        return 'Please tell us your citizenship (Resident of Kazakhstan or Foreign citizen) — the cost of services varies.'
-    return 'Подскажите, пожалуйста, Ваше гражданство (гражданин РК или иностранный гражданин) — стоимость услуг отличается.'
+function buildCitizenshipDataNote(): string {
+    return 'ТРЕБУЕТСЯ уточнение у пользователя: гражданство не указано (гражданин РК или иностранный гражданин) — стоимость услуг отличается.'
 }
 
 const CITIZENSHIP_EXTRACTION_PROMPT = `Ты — классификатор гражданства.
@@ -108,9 +105,12 @@ export async function handlePriceIntent(
     if (!effectiveCitizenship) missing.push('citizenship')
 
     if (missing.length > 0) {
-        const baseAnswer = missing.includes('branch') ? buildBranchQuestion(lang) : buildCitizenshipQuestion(lang)
+        const notes: string[] = []
+        if (missing.includes('branch')) notes.push(buildBranchDataNote())
+        if (missing.includes('citizenship')) notes.push(buildCitizenshipDataNote())
+
         return {
-            content: baseAnswer,
+            content: notes.join('\n\n'),
             confidence: 'low',
             gaps: [],
             updatedPatient: updatedPatient as unknown as Record<string, unknown> | undefined

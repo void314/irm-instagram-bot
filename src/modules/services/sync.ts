@@ -1,37 +1,14 @@
-import { and, eq } from 'drizzle-orm'
-
 import { env } from '../../config/constants'
-import { BRANCHES } from '../../constants/branches'
+import { getOwnedPriceLists } from '../../constants/priceLists'
 import { db } from '../../db/client'
 import { services } from '../../db/schema'
+import { log } from '../../services/logger'
 import { classifyServiceNames } from './service-classifier'
 
 const API_BASE = env.EXTERNAL_API_BASE_URL || 'https://rk.etl.uzun.kz/api/v1'
 
-// Прайс-листы для иностранных граждан называются по-разному в разных филиалах
-// ("Прайс нерезиденты ...", "... (Иностранцы)", "Прайс СНГ нерезиденты ...",
-// "Прайс Средней Азии и РФ ... нерезиденты"), поэтому классифицируем по ключевым
-// словам вместо жёсткой подстроки. Всё остальное считаем прайсом для граждан РК.
-const FOREIGN_PRICE_LIST_MARKERS = /нерезидент|иностран|снг/i
-
-function classifyCitizenship(priceListName: string): 'kz' | 'foreign' {
-    return FOREIGN_PRICE_LIST_MARKERS.test(priceListName) ? 'foreign' : 'kz'
-}
-
-interface PriceList {
-    ref1cId: string
-    name: string
-    code: string
-    branchRef1cId: string
-}
-
-interface PriceListsResponse {
-    success: boolean
-    data?: {
-        priceLists: PriceList[]
-        pagination: { total: number }
-    }
-}
+// Батч вставки — чтобы не отправлять один INSERT на тысячи строк за раз.
+const INSERT_BATCH_SIZE = 500
 
 interface ServiceNode {
     ref1cId: string
@@ -93,45 +70,50 @@ function flattenTree(
 }
 
 export async function fetchAndUpdateServices(): Promise<SyncResult> {
-    let added = 0
-    let updated = 0
-
     const allItems: FlatServiceItem[] = []
 
-    for (const branch of BRANCHES) {
-        // Не фильтруем по search — названия основных прайс-листов не единообразны
-        // между филиалами (например, у Шымкента список называется "ИРМ Шымкент",
-        // без слова "Основной"). Забираем все прайс-листы филиала и классифицируем
-        // их по гражданству локально.
-        const priceListsRes = await fetch(`${API_BASE}/price-lists?branchId=${branch.ref1cId}&limit=100`, {
-            headers: { Accept: 'application/json' },
-            signal: AbortSignal.timeout(15000)
-        })
-
-        if (!priceListsRes.ok) {
-            continue
-        }
-
-        const priceListsData = (await priceListsRes.json()) as PriceListsResponse
-        if (!priceListsData.success || !priceListsData.data?.priceLists?.length) {
-            continue
-        }
-
-        for (const pl of priceListsData.data.priceLists) {
-            const citizenship = classifyCitizenship(pl.name)
-
-            const treeRes = await fetch(`${API_BASE}/medical-services/tree?priceListId=${pl.ref1cId}`, {
+    // Тянем РОВНО ОДИН прайс-лист на пару (филиал, гражданство) — тот, что
+    // зафиксирован в constants/priceLists.ts. Раньше здесь забирались ВСЕ
+    // прайс-листы филиала (программы лечения, устаревшие СНГ-версии и т.д.),
+    // из-за чего одна и та же услуга попадала в базу по нескольку раз с разными
+    // priceListId и иногда разными ценами — pricesTool.ts фильтрует только по
+    // branchRef1cId+citizenship и не знает про priceListId, поэтому пациент видел
+    // задвоенные/противоречивые цены.
+    for (const owned of getOwnedPriceLists()) {
+        try {
+            const treeRes = await fetch(`${API_BASE}/medical-services/tree?priceListId=${owned.priceListId}`, {
                 headers: { Accept: 'application/json' },
                 signal: AbortSignal.timeout(15000)
             })
 
-            if (!treeRes.ok) continue
+            if (!treeRes.ok) {
+                log.warn(
+                    {
+                        module: 'services-cron',
+                        branchRef1cId: owned.branchRef1cId,
+                        priceListId: owned.priceListId
+                    },
+                    '[ServicesCron] price list fetch failed, skipping'
+                )
+                continue
+            }
 
             const treeData = (await treeRes.json()) as ServicesTreeResponse
             if (!treeData.success || !treeData.data) continue
 
-            const flat = flattenTree(treeData.data, null, pl.branchRef1cId, pl.ref1cId, citizenship)
+            const flat = flattenTree(
+                treeData.data,
+                null,
+                owned.branchRef1cId,
+                owned.priceListId,
+                owned.citizenship
+            )
             allItems.push(...flat)
+        } catch (err) {
+            log.error(
+                { module: 'services-cron', branchRef1cId: owned.branchRef1cId, error: String(err) },
+                '[ServicesCron] price list fetch error, skipping'
+            )
         }
     }
 
@@ -140,45 +122,32 @@ export async function fetchAndUpdateServices(): Promise<SyncResult> {
     // тысячи раз за один синк. Уже классифицированные ранее названия берутся из кеша.
     const categoryMap = await classifyServiceNames(allItems.map((item) => item.name))
 
-    for (const item of allItems) {
-        const category = categoryMap.get(item.name) ?? null
+    // TRUNCATE + полная вставка вместо upsert-diff: таблица — это просто кеш
+    // текущего состояния 1С, перестраивается заново каждый синк (раз в 6 часов).
+    // Так нет риска, что строки от исключённых теперь прайс-листов останутся
+    // в базе навсегда, и нет race-prone check-then-insert на каждую строку.
+    await db.transaction(async (tx) => {
+        await tx.delete(services)
 
-        const existing = await db
-            .select({ id: services.id })
-            .from(services)
-            .where(and(eq(services.ref1cId, item.ref1cId), eq(services.priceListId, item.priceListId)))
-            .then((rows) => rows[0])
+        for (let i = 0; i < allItems.length; i += INSERT_BATCH_SIZE) {
+            const batch = allItems.slice(i, i + INSERT_BATCH_SIZE)
+            if (batch.length === 0) continue
 
-        if (existing) {
-            await db
-                .update(services)
-                .set({
+            await tx.insert(services).values(
+                batch.map((item) => ({
+                    ref1cId: item.ref1cId,
                     name: item.name,
                     price: item.price != null ? String(item.price) : null,
                     durationMinutes: item.durationMinutes,
                     parentRef1cId: item.parentRef1cId,
                     branchRef1cId: item.branchRef1cId,
+                    priceListId: item.priceListId,
                     citizenship: item.citizenship,
-                    category,
-                    updatedAt: new Date()
-                })
-                .where(eq(services.id, existing.id))
-            updated++
-        } else {
-            await db.insert(services).values({
-                ref1cId: item.ref1cId,
-                name: item.name,
-                price: item.price != null ? String(item.price) : null,
-                durationMinutes: item.durationMinutes,
-                parentRef1cId: item.parentRef1cId,
-                branchRef1cId: item.branchRef1cId,
-                priceListId: item.priceListId,
-                citizenship: item.citizenship,
-                category
-            })
-            added++
+                    category: categoryMap.get(item.name) ?? null
+                }))
+            )
         }
-    }
+    })
 
-    return { added, updated, total: allItems.length }
+    return { added: allItems.length, updated: 0, total: allItems.length }
 }

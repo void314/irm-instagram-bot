@@ -6,7 +6,7 @@ import {
     incrementMessageCount,
     updateConversationMetadata
 } from '../../services/rag/context'
-import { detectIntentLLM } from '../../services/rag/intent'
+import { detectIntentLLM, getFastIntentResponse } from '../../services/rag/intent'
 import { detectLanguage } from '../../services/rag/language'
 import {
     type PatientInfo,
@@ -16,13 +16,13 @@ import {
     updatePatient
 } from '../../services/rag/patient'
 import { handleBookingIntent } from '../booking/service'
-import { handleConversationIntent } from '../conversation'
+import { extractNameCandidate, handleConversationIntent } from '../conversation'
 import { checkAndHandleObjection } from '../objection'
 import { processRagQuery } from '../rag'
 import { selectNextAgents } from '../registry'
 import { handlePriceIntent } from '../tool'
 import type { AgentResult, PipelineState } from '../types'
-import { synthesizeFinalAnswer } from './synthesis'
+import { craftResponse } from './respond'
 
 const BOOKING_DECLINE_RESPONSE: Record<'ru' | 'kk' | 'en', string> = {
     ru: 'Хорошо, если передумаете — обращайтесь!',
@@ -31,6 +31,12 @@ const BOOKING_DECLINE_RESPONSE: Record<'ru' | 'kk' | 'en', string> = {
 }
 
 const MAX_PIPELINE_ITERATIONS = 3
+
+// Агенты, которые отдают СЫРЫЕ ФАКТЫ (без тона/приветствий/CTA) и поэтому ВСЕГДА
+// должны пройти через главного агента (craftResponse), прежде чем попасть к пациенту.
+// booking/objection остаются самостоятельными — сами ведут диалог с пациентом и
+// возвращают уже готовый, финальный текст (см. решение "Фаза 1" рефакторинга).
+const DATA_MODE_AGENTS = new Set(['rag', 'tool'])
 
 export interface RagContext {
     conversationId: bigint
@@ -112,6 +118,11 @@ async function dispatchAgent(
         case 'rag':
             return processRagQuery(query, history, state.patientStr, patient, debug)
         case 'booking':
+            if (state.conversationId > 0) {
+                updateConversationMetadata(state.conversationId, { bookingInProgress: true }).catch((err) =>
+                    log.error({ module: 'orchestrator', error: String(err) }, 'Failed to set bookingInProgress')
+                )
+            }
             return handleBookingIntent(query, state.senderId, history, state.lang)
         case 'objection':
             return (
@@ -183,10 +194,31 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
     const isFirstMessage = messageCount === 0
 
-    const substantiveIntents = detectedIntents.filter(
+    let substantiveIntents = detectedIntents.filter(
         (i) =>
             !['greeting', 'goodbye', 'gratitude', 'clear_context', 'provide_name', 'booking_decline'].includes(i)
     )
+
+    if (context && detectedIntents.includes('provide_name')) {
+        const bookingInProgress = convoMetadata?.bookingInProgress === true
+        if (bookingInProgress) {
+            const nameCandidate = extractNameCandidate(query)
+            if (nameCandidate) {
+                await updatePatient(context.senderId, {
+                    name: nameCandidate,
+                    nameSource: 'user',
+                    nameChangeOffered: true
+                })
+            }
+            if (!substantiveIntents.includes('booking')) {
+                substantiveIntents.push('booking')
+            }
+            const index = detectedIntents.indexOf('provide_name')
+            if (index !== -1) {
+                detectedIntents.splice(index, 1)
+            }
+        }
+    }
 
     // --- Pure Fast Paths (when no substantive intent is present) ---
     if (substantiveIntents.length === 0) {
@@ -284,6 +316,28 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
     const calledAgents: string[] = []
 
+    // Фрагменты от rag/tool (сырые факты — всегда идут через craftResponse) и от
+    // booking/objection (уже готовый, самостоятельный ответ — идёт к пациенту как есть).
+    const dataFragments: string[] = []
+    const finalFragments: string[] = []
+
+    function recordResult(agentName: string, result: AgentResult): boolean {
+        if (result.updatedPatient && patient) {
+            patient = { ...patient, ...result.updatedPatient }
+        }
+        if (result.content) {
+            if (DATA_MODE_AGENTS.has(agentName)) {
+                dataFragments.push(result.content)
+            } else {
+                finalFragments.push(result.content)
+            }
+        }
+        if (result.gaps.length > 0) {
+            state.openGaps.push(...result.gaps)
+        }
+        return result.gaps.some((g) => g.priority === 'critical')
+    }
+
     // We use substantiveIntents if available, else we fall back to detectedIntents
     let pipelineIntents = substantiveIntents.length > 0 ? substantiveIntents : detectedIntents
 
@@ -292,9 +346,10 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     const primaryAgentsToCall = [...new Set(pipelineIntents.map(mapIntentToAgentName))]
 
     const results = await Promise.all(
-        primaryAgentsToCall.map((agentName) => {
+        primaryAgentsToCall.map(async (agentName) => {
             calledAgents.push(agentName)
-            return dispatchAgent(agentName, query, state, patient, history, debug)
+            const result = await dispatchAgent(agentName, query, state, patient, history, debug)
+            return { agentName, result }
         })
     )
 
@@ -302,19 +357,8 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     let anyCriticalGaps = false
     let lowestConfidence = 'high'
 
-    for (const result of results) {
-        if (result.updatedPatient && patient) {
-            patient = { ...patient, ...result.updatedPatient }
-        }
-        if (result.content) {
-            state.accumulatedContent.push(result.content)
-        }
-        if (result.gaps.length > 0) {
-            state.openGaps.push(...result.gaps)
-        }
-        if (result.gaps.some((g) => g.priority === 'critical')) {
-            anyCriticalGaps = true
-        }
+    for (const { agentName, result } of results) {
+        if (recordResult(agentName, result)) anyCriticalGaps = true
         if (result.confidence === 'low') lowestConfidence = 'low'
         else if (result.confidence === 'partial' && lowestConfidence !== 'low') lowestConfidence = 'partial'
     }
@@ -336,28 +380,18 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
             if (!nextAgents || nextAgents.length === 0) break
 
             const nextResults = await Promise.all(
-                nextAgents.map((agent) => {
+                nextAgents.map(async (agent) => {
                     calledAgents.push(agent.name)
-                    return dispatchAgent(agent.name, query, state, patient, history, debug)
+                    const result = await dispatchAgent(agent.name, query, state, patient, history, debug)
+                    return { agentName: agent.name, result }
                 })
             )
 
             state.openGaps = [] // Reset gaps for this iteration, will be filled by nextResults
 
             let iterationCriticalGaps = false
-            for (const nextResult of nextResults) {
-                if (nextResult.updatedPatient && patient) {
-                    patient = { ...patient, ...nextResult.updatedPatient }
-                }
-                if (nextResult.content) {
-                    state.accumulatedContent.push(nextResult.content)
-                }
-                if (nextResult.gaps.length > 0) {
-                    state.openGaps.push(...nextResult.gaps)
-                }
-                if (nextResult.gaps.some((g) => g.priority === 'critical')) {
-                    iterationCriticalGaps = true
-                }
+            for (const { agentName, result: nextResult } of nextResults) {
+                if (recordResult(agentName, nextResult)) iterationCriticalGaps = true
             }
 
             // Loop detection: prevent ping-pong by tracking all seen gaps
@@ -375,12 +409,15 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
             newGapsTypes.forEach((type) => seenGaps.add(type))
 
             // Early exit if target agents returned high confidence with no gaps
-            if (!iterationCriticalGaps && nextResults.every((r) => r.confidence === 'high' && r.gaps.length === 0))
+            if (
+                !iterationCriticalGaps &&
+                nextResults.every(({ result }) => result.confidence === 'high' && result.gaps.length === 0)
+            )
                 break
         }
     }
 
-    // Compute post-processing flags (passed into synthesis for natural integration)
+    // Compute post-processing flags (passed into craftResponse for natural integration)
     const patientName = patient?.name || null
     const askForName = !!(patient && !patient.name && !patient.nameChangeOffered)
     const shouldSuggestBooking = !!(
@@ -400,22 +437,24 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         messageCount >= 4
     )
 
-    // Filter empty content and synthesize
-    const nonEmptyContent = state.accumulatedContent.filter((c) => c.length > 0)
+    // Собираем финальный ответ. booking/objection уже говорят готовым, финальным
+    // текстом от лица Айгерим (самостоятельные агенты, см. DATA_MODE_AGENTS) — их
+    // не трогаем. rag/tool отдают только сырые факты, поэтому ГЛАВНЫЙ АГЕНТ
+    // (craftResponse) вызывается для них ВСЕГДА — даже если фрагмент один, —
+    // потому что сырой факт сам по себе ещё не является ответом пациенту.
+    const nonEmptyDataFragments = dataFragments.filter((c) => c.length > 0)
+    const nonEmptyFinalFragments = finalFragments.filter((c) => c.length > 0)
+
     let answer: string
-    if (nonEmptyContent.length === 0) {
+    if (nonEmptyDataFragments.length === 0 && nonEmptyFinalFragments.length === 0) {
         answer = 'Извините, не удалось найти информацию.'
-    } else if (
-        nonEmptyContent.length === 1 &&
-        nonEmptyContent[0].trim().length < 200 &&
-        nonEmptyContent[0].trim().endsWith('?')
-    ) {
-        // Уточняющий вопрос от tool (филиал/гражданство) — вернуть как есть, без пост-обработки
-        answer = nonEmptyContent[0]
+    } else if (nonEmptyDataFragments.length === 0) {
+        // Только booking/objection — их ответ уже финальный и цельный
+        answer = nonEmptyFinalFragments.join('\n\n')
     } else {
-        answer = await synthesizeFinalAnswer(
+        const craftedAnswer = await craftResponse(
             query,
-            nonEmptyContent,
+            nonEmptyDataFragments,
             effectiveLang,
             patientStr,
             history,
@@ -424,10 +463,37 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
             shouldNudgeBooking,
             askForName
         )
+        // Редкий случай мультиинтента (например "хочу записаться, сколько стоит?"),
+        // когда booking/objection отработали ПАРАЛЛЕЛЬНО с rag/tool — их готовый
+        // текст не переписываем, а просто ставим рядом с ответом главного агента.
+        answer =
+            nonEmptyFinalFragments.length > 0
+                ? `${nonEmptyFinalFragments.join('\n\n')}\n\n${craftedAnswer}`
+                : craftedAnswer
+    }
+
+    // Первое сообщение в диалоге, но интент не "greeting" (пользователь сразу задал
+    // содержательный вопрос, или написал "здравствуйте, сколько стоит...") — быстрые
+    // пути (handleConversationIntent) не отрабатывают, поэтому явно добавляем
+    // приветствие в начало ответа, чтобы Айгерим представилась при первом контакте.
+    if (isFirstMessage && substantiveIntents.length > 0) {
+        const greeting = getFastIntentResponse('greeting', effectiveLang, {
+            name: patientName,
+            isFirstMessage: true
+        })
+        if (greeting) answer = `${greeting}\n\n${answer}`
     }
 
     // Fire-and-forget DB side-effects (don't block the response)
     if (context) {
+        const bookingDeclineDetected = detectedIntents.includes('booking_decline')
+        const bookingCompleted = answer.includes('(Тестовый режим)')
+        if (bookingDeclineDetected || bookingCompleted) {
+            updateConversationMetadata(context.conversationId, { bookingInProgress: false }).catch((err) =>
+                log.error({ module: 'orchestrator', error: String(err) }, 'Failed to clear bookingInProgress')
+            )
+        }
+
         if (shouldSuggestBooking || shouldNudgeBooking) {
             updatePatient(context.senderId, { bookingNudgeOffered: true }).catch((err) =>
                 log.error({ module: 'orchestrator', error: String(err) }, 'Failed to update booking nudge')

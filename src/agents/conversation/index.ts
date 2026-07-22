@@ -8,7 +8,7 @@ import type { AgentResult } from '../types'
  * Сама классификация (что пользователь отвечает на вопрос об имени) уже сделана LLM
  * в detectIntentLLM — здесь только санити-чек значения перед сохранением в БД.
  */
-function extractNameCandidate(text: string): string | null {
+export function extractNameCandidate(text: string): string | null {
     const trimmed = text.trim()
     if (trimmed.length < 2 || trimmed.length > 40) return null
     if (/[0-9@#{}[\]<>/\\]/.test(trimmed)) return null

@@ -1,6 +1,4 @@
-import { chat } from '../llm/openrouter'
 import { log } from '../logger'
-import { SYSTEM_PROMPT_CLARIFICATION } from './prompts'
 
 // Маркеры неуверенности модели на всех трёх языках интерфейса (ru/kk/en).
 // Используются только как ДОПОЛНИТЕЛЬНЫЙ сигнал — основной, детерминированный
@@ -38,7 +36,6 @@ function containsAmbiguity(answer: string): boolean {
 export interface GroundingResult {
     passed: boolean
     needsClarification: boolean
-    clarificationQuestion?: string
 }
 
 export interface ChunkWithScore {
@@ -46,11 +43,7 @@ export interface ChunkWithScore {
     score: number
 }
 
-export async function checkGrounding(
-    answer: string,
-    chunks: ChunkWithScore[],
-    query: string
-): Promise<GroundingResult> {
+export async function checkGrounding(answer: string, chunks: ChunkWithScore[]): Promise<GroundingResult> {
     if (chunks.length === 0) {
         log.debug({ module: 'grounding', reason: 'no_chunks' }, 'Grounding: pass (no chunks to check)')
         return { passed: true, needsClarification: false }
@@ -85,36 +78,6 @@ export async function checkGrounding(
 
     return {
         passed: false,
-        needsClarification: true,
-        clarificationQuestion: await generateClarification(
-            query,
-            chunks.map((c) => c.text)
-        )
-    }
-}
-
-async function generateClarification(query: string, contextTexts: string[]): Promise<string> {
-    const contextPreview = contextTexts
-        .map((t) => t.slice(0, 300))
-        .join('\n---\n')
-        .slice(0, 2000)
-
-    try {
-        const response = (
-            await chat([
-                {
-                    role: 'system',
-                    content: SYSTEM_PROMPT_CLARIFICATION.replace('{context}', contextPreview)
-                },
-                {
-                    role: 'user',
-                    content: `Вопрос пользователя: ${query}`
-                }
-            ])
-        ).content
-
-        return response || 'Не могли бы вы уточнить ваш вопрос? Мне не хватает информации для полного ответа.'
-    } catch {
-        return 'Не могли бы вы уточнить ваш вопрос? Мне не хватает информации для полного ответа.'
+        needsClarification: true
     }
 }

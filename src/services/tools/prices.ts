@@ -2,6 +2,7 @@ import { and, asc, eq, gte, ilike, isNotNull, or } from 'drizzle-orm'
 
 import { env } from '../../config/constants'
 import { findBranchByNameOrCity, getBranchesList } from '../../constants/branches'
+import { hasOwnPriceList, resolveFallbackBranchRef1cId } from '../../constants/priceLists'
 import { db } from '../../db/client'
 import { services } from '../../db/schema'
 import { chat } from '../llm/openrouter'
@@ -79,14 +80,14 @@ async function getCategorySummary(branchRef: string, citizenship: 'kz' | 'foreig
     return rows.filter((r): r is CategoryRow => r.category !== null)
 }
 
-const CATEGORY_SUMMARY_SYSTEM_PROMPT = `Ты — форматёр данных клиники IRM.
+const CATEGORY_SUMMARY_SYSTEM_PROMPT = `Ты — модуль извлечения данных клиники IRM.
 Тебе дан JSON-список категорий медицинских услуг с ценой на самую доступную услугу в каждой категории.
-Оформи это в связный текст для пациента клиники (не маркированный список):
-- кратко упомяни несколько категорий с ориентировочными ценами ("от X ₸"),
-- явно скажи, что это только часть услуг клиники и полный перечень значительно шире,
-- закончи вопросом, что именно интересует пользователя, чтобы дать точную цену.
+Твой текст НЕ увидит пациент напрямую — его переработает главный агент. Поэтому:
+- перечисли категории с ориентировочными ценами ("от X ₸"),
+- укажи, что это только часть услуг клиники и полный перечень значительно шире,
+- НЕ задавай вопросов пользователю, НЕ обращайся к нему напрямую, НЕ добавляй вежливых фраз.
 Используй ТОЛЬКО цифры из предоставленных данных, не придумывай цены и услуги.
-Будь краток (4-6 предложений).`
+Будь краток.`
 
 async function formatCategorySummaryWithLLM(rows: CategoryRow[], lang: 'ru' | 'kk' | 'en'): Promise<string> {
     const payload = rows.map((r) => ({
@@ -162,6 +163,16 @@ export const pricesTool: Tool = {
             }
         }
 
+        // У некоторых филиалов нет собственного прайс-листа под это гражданство
+        // (например, у IRM Кабанбай нет "основного"/kz списка, у IRM Костанай нет
+        // "нерезидент" списка) — в этом случае используем прайс IRM Алматы.
+        const hasOwn = hasOwnPriceList(resolvedBranchRef, citizenship)
+        const queryBranchRef = hasOwn ? resolvedBranchRef : resolveFallbackBranchRef1cId()
+        const usedFallbackBranch = queryBranchRef !== resolvedBranchRef
+        const fallbackNote = usedFallbackBranch
+            ? '\n\n(У этого филиала нет отдельного прайс-листа для этой категории — показаны цены головного филиала IRM Алматы.)'
+            : ''
+
         // Try matching tokens against DB service names
         const conditions = tokens.map((token) => ilike(services.name, `%${token}%`))
 
@@ -174,7 +185,7 @@ export const pricesTool: Tool = {
             .from(services)
             .where(
                 and(
-                    eq(services.branchRef1cId, resolvedBranchRef),
+                    eq(services.branchRef1cId, queryBranchRef),
                     eq(services.citizenship, citizenship),
                     or(...conditions)
                 )
@@ -194,13 +205,13 @@ export const pricesTool: Tool = {
 
             return {
                 success: true,
-                answer: `${header}\n${lines.join('\n')}\n\nОкончательную стоимость и необходимый объём услуг определяет врач на приёме.`,
+                answer: `${header}\n${lines.join('\n')}${fallbackNote}`,
                 found: true
             }
         }
 
         // No matches — show category summary as fallback
-        const categoryRows = await getCategorySummary(resolvedBranchRef, citizenship)
+        const categoryRows = await getCategorySummary(queryBranchRef, citizenship)
         if (categoryRows.length === 0) {
             return {
                 success: true,
@@ -214,7 +225,7 @@ export const pricesTool: Tool = {
         const summary = await formatCategorySummaryWithLLM(categoryRows, lang)
         return {
             success: true,
-            answer: summary,
+            answer: `${summary}${fallbackNote}`,
             found: true
         }
     }
