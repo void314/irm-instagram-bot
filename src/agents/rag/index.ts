@@ -3,11 +3,12 @@ import { isLearningEnabled } from '../../config/learning'
 import { type ChatMessage, type ToolCall, chat, generateEmbedding } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
 import { type GroundingResult, checkGrounding } from '../../services/rag/grounding'
-import { hybridSearch } from '../../services/rag/hybrid'
+import { type HybridSearchResult, hybridSearch } from '../../services/rag/hybrid'
 import { findPendingOverrides } from '../../services/rag/override'
 import { type PatientInfo } from '../../services/rag/patient'
 import { DATA_PROMPT_NO_CONTEXT, DATA_PROMPT_WITH_CONTEXT } from '../../services/rag/prompts'
 import { resolveSearchQueries } from '../../services/rag/query-rewrite'
+import { rerankChunks } from '../../services/rag/reranker'
 import { executeTool, getToolDefinitions } from '../../services/tools'
 import { type RagDebug } from '../orchestrator'
 import type { AgentResult } from '../types'
@@ -79,14 +80,34 @@ export async function processRagQuery(
             hybridSearch(q, q.toLowerCase() === semanticQuery.toLowerCase() ? emb : undefined)
         )
     )
-    const searchResults = allResults
+    const initialResults = allResults
         .flat()
         .sort((a, b) => b.score - a.score)
         .slice(0, env.RAG_TOP_K)
 
+    let searchResults: HybridSearchResult[]
+    if (initialResults.length > env.RAG_RERANK_TOP_K) {
+        searchResults = await rerankChunks(query, initialResults, env.RAG_RERANK_TOP_K)
+    } else {
+        searchResults = initialResults
+        log.debug(
+            {
+                module: 'agent:rag',
+                reranker: 'skipped',
+                reason: `initial_results=${initialResults.length} <= RAG_RERANK_TOP_K=${env.RAG_RERANK_TOP_K}`
+            },
+            'Reranker skipped — too few results'
+        )
+    }
+
     debug.searchResultsCount = searchResults.length
     log.info(
-        { module: 'agent:rag', queries: searchQueries.length, total: searchResults.length },
+        {
+            module: 'agent:rag',
+            queries: searchQueries.length,
+            initial: initialResults.length,
+            final: searchResults.length
+        },
         'Hybrid search results'
     )
 

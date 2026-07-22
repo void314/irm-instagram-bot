@@ -7,8 +7,8 @@ import { chat } from '../llm/openrouter'
 import { SYSTEM_PROMPT_SUMMARY } from './prompts'
 
 const BOT_ID = env.INSTAGRAM_BUSINESS_ID
-const MAX_HISTORY = 6
-const SUMMARY_THRESHOLD = 6
+const MAX_HISTORY = 10
+const SUMMARY_THRESHOLD = 8
 
 function role(fromId: string): string {
     return fromId === BOT_ID ? 'assistant' : 'user'

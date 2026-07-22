@@ -1,4 +1,9 @@
 import { env } from '../../config/constants'
+import {
+    buildBranchClarificationPrompt,
+    findBranchByNameOrCity,
+    findBranchByRef1cId
+} from '../../constants/branches'
 import { log } from '../logger'
 import { type MDoctor, findDoctors } from './doctor-search'
 import type { Tool, ToolResult } from './types'
@@ -13,12 +18,17 @@ interface WorkPeriod {
     branchRef1cId: string
 }
 
+interface BusySlot {
+    dateStart: string
+    dateEnd: string
+}
+
 interface ScheduleDay {
     date: string
     dayOfWeek: number
     isWorkDay: boolean
     workPeriods: WorkPeriod[]
-    busySlots: unknown[]
+    busySlots: BusySlot[]
 }
 
 interface ScheduleResponse {
@@ -54,7 +64,32 @@ function formatDayLabel(dateStr: string): string {
     return d.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })
 }
 
-function formatScheduleDays(schedule: ScheduleDay[]): string {
+// Внешний API игнорирует параметры from/to и возвращает расписание за весь
+// доступный диапазон (обычно месяц). Обрезаем до запрошенной недели, чтобы
+// заголовок "на текущую неделю" соответствовал действительности и модель не
+// путалась в одинаковых повторяющихся записях за разные недели.
+function trimToWeek(schedule: ScheduleDay[], monday: Date, sunday: Date): ScheduleDay[] {
+    const from = formatDate(monday)
+    const to = formatDate(sunday)
+    return schedule.filter((d) => d.date >= from && d.date <= to)
+}
+
+// Собираем количество занятых окон на каждый день из всех busySlots ответа API.
+// busySlots в каждом дне API хранятся со смещением: обычно слоты дня X лежат
+// в бакете с датой X-1 (UTC-конвенция). Мы собираем их все в плоский список
+// и считаем количество уникальных dateStart на каждую дату (отсекая время).
+function countBusySlotsByDate(schedule: ScheduleDay[]): Map<string, number> {
+    const counts = new Map<string, number>()
+    for (const day of schedule) {
+        for (const slot of day.busySlots) {
+            const date = slot.dateStart.slice(0, 10)
+            counts.set(date, (counts.get(date) || 0) + 1)
+        }
+    }
+    return counts
+}
+
+function formatScheduleDays(schedule: ScheduleDay[], busyCounts: Map<string, number>): string {
     const lines: string[] = []
 
     for (const day of schedule) {
@@ -72,23 +107,36 @@ function formatScheduleDays(schedule: ScheduleDay[]): string {
         if (periods.length === 0) {
             lines.push(`${label} — нет свободного времени`)
         } else {
-            lines.push(`${label}: ${periods.join(', ')}`)
+            const busy = busyCounts.get(day.date)
+            const busyNote =
+                busy && busy > 0 ? ` (есть занятые окна — ${busy} шт., уточни у пациента точное время)` : ''
+            lines.push(`${label}: ${periods.join(', ')}${busyNote}`)
         }
     }
 
     return lines.join('\n')
 }
 
-function formatSchedule(doctor: MDoctor, schedule: ScheduleDay[]): string {
-    const header = `Расписание врача ${doctor.fullName} на текущую неделю:`
+function formatSchedule(
+    doctor: MDoctor,
+    schedule: ScheduleDay[],
+    branchName: string,
+    monday: Date,
+    sunday: Date
+): string {
+    const weekSchedule = trimToWeek(schedule, monday, sunday)
+    const busyCounts = countBusySlotsByDate(schedule)
+    const header = `Расписание врача ${doctor.fullName} на текущую неделю (${formatDate(monday)} – ${formatDate(sunday)}) в филиале ${branchName}:`
     const consultPrice = doctor.consultPrice
         ? `\n\nСтоимость консультации: ${Number(doctor.consultPrice).toLocaleString('ru-RU')} ₸`
         : ''
-    return `${header}\n\n${formatScheduleDays(schedule)}${consultPrice}`
+    return `${header}\n\n${formatScheduleDays(weekSchedule, busyCounts)}${consultPrice}`
 }
 
-function hasFreeSlots(schedule: ScheduleDay[]): boolean {
-    return schedule.some((day) => day.isWorkDay && day.workPeriods.some((p) => p.timeType !== 'busy'))
+function hasFreeSlots(schedule: ScheduleDay[], monday: Date, sunday: Date): boolean {
+    return trimToWeek(schedule, monday, sunday).some(
+        (day) => day.isWorkDay && day.workPeriods.some((p) => p.timeType !== 'busy')
+    )
 }
 
 async function fetchScheduleRaw(doctor: MDoctor): Promise<ScheduleDay[] | null> {
@@ -123,18 +171,49 @@ export const scheduleTool: Tool = {
 
     async execute(args: Record<string, unknown>): Promise<ToolResult> {
         const query = String(args.doctor_name ?? args.query ?? '').trim()
+        const branchRef = String(args.branch_ref1c_id ?? '').trim()
+        const branchNameInput = String(args.branch_name ?? '').trim()
 
-        const doctors = await findDoctors(query, 5)
+        let resolvedBranchName = branchNameInput
+        let resolvedBranchRef = branchRef
+
+        if (!resolvedBranchRef && branchNameInput) {
+            const branch = findBranchByNameOrCity(branchNameInput)
+            if (branch) {
+                resolvedBranchRef = branch.ref1cId
+                resolvedBranchName = branch.name
+            }
+        }
+
+        if (!resolvedBranchRef) {
+            return {
+                success: true,
+                answer: buildBranchClarificationPrompt(branchNameInput),
+                found: false
+            }
+        }
+
+        // branch_ref1c_id мог прийти напрямую (без branch_name) — для отображения
+        // пациенту находим человекочитаемое название филиала по ID.
+        if (!resolvedBranchName) {
+            resolvedBranchName = findBranchByRef1cId(resolvedBranchRef)?.name ?? resolvedBranchRef
+        }
+
+        const doctors = await findDoctors(query, 5, resolvedBranchRef)
 
         if (doctors.length === 0) {
             return {
                 success: true,
                 found: false,
                 answer:
-                    'К сожалению, я не нашла врача по Вашему запросу. ' +
-                    'Попробуйте уточнить фамилию или специальность врача.'
+                    `К сожалению, я не нашла врача по Вашему запросу в филиале ${resolvedBranchName}. ` +
+                    'Попробуйте уточнить фамилию, специальность или выбрать другой филиал.'
             }
         }
+
+        const monday = getMondayOfCurrentWeek()
+        const sunday = new Date(monday)
+        sunday.setDate(sunday.getDate() + 6)
 
         const skipNotes: string[] = []
 
@@ -150,8 +229,8 @@ export const scheduleTool: Tool = {
                 continue
             }
 
-            if (hasFreeSlots(schedule)) {
-                let answer = formatSchedule(doctor, schedule)
+            if (hasFreeSlots(schedule, monday, sunday)) {
+                let answer = formatSchedule(doctor, schedule, resolvedBranchName, monday, sunday)
                 if (skipNotes.length > 0) {
                     const notes = skipNotes.join('\n')
                     answer = `${notes}\n\nНо ${doctor.firstName || doctor.fullName} может принять:\n\n${answer}`

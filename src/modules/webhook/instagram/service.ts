@@ -315,6 +315,7 @@ export class InstagramWebhookService {
         const message = event.message
         const isEcho = message?.is_echo
         const text = message?.text
+        const mid = message?.mid
 
         if (!senderId || !message || isEcho) {
             return
@@ -389,7 +390,7 @@ export class InstagramWebhookService {
 
         if (isBusinessRecipient) {
             log.info({ module: 'webhook', senderId, recipientId }, '[webhook] messaging event handled')
-            await this.handleIncomingMessage(senderId, finalText, messageMetadata)
+            await this.handleIncomingMessage(senderId, finalText, messageMetadata, mid)
         }
     }
 
@@ -414,6 +415,7 @@ export class InstagramWebhookService {
                   to?: { id?: string }
                   is_echo?: boolean
                   message?: { text?: string; attachments?: Array<{ type?: string; payload?: { url?: string } }> }
+                  mid?: string
               }
             | undefined
 
@@ -421,6 +423,7 @@ export class InstagramWebhookService {
         const recipientId = changeValue?.to?.id
         const isEcho = changeValue?.is_echo
         const text = changeValue?.message?.text
+        const mid = changeValue?.mid
 
         if (!senderId || isEcho) {
             return
@@ -491,7 +494,7 @@ export class InstagramWebhookService {
 
         if (recipientId && env.INSTAGRAM_BUSINESS_ID && recipientId === env.INSTAGRAM_BUSINESS_ID) {
             log.info({ module: 'webhook', senderId, recipientId }, '[webhook] change event handled')
-            await this.handleIncomingMessage(senderId, finalText, messageMetadata)
+            await this.handleIncomingMessage(senderId, finalText, messageMetadata, mid)
         }
     }
 
@@ -680,10 +683,11 @@ export class InstagramWebhookService {
     private async handleIncomingMessage(
         senderId: string,
         text: string | null,
-        messageMetadata?: Record<string, unknown>
+        messageMetadata?: Record<string, unknown>,
+        mid?: string
     ) {
         log.info(
-            { module: 'webhook', senderId, hasText: !!text, textLength: text?.length ?? 0 },
+            { module: 'webhook', senderId, hasText: !!text, textLength: text?.length ?? 0, mid },
             '[webhook] incoming message'
         )
 
@@ -717,6 +721,50 @@ export class InstagramWebhookService {
             return
         }
 
+        // Message Deduplication and Persistence
+        if (env.INSTAGRAM_BUSINESS_ID && text) {
+            if (mid) {
+                const inserted = await db
+                    .insert(messages)
+                    .values({
+                        conversationId: conv.id,
+                        fromId: senderId,
+                        text,
+                        metadata: messageMetadata,
+                        mid
+                    })
+                    .onConflictDoNothing()
+                    .returning({ id: messages.id })
+
+                if (inserted.length === 0) {
+                    log.info({ module: 'webhook', mid }, '[webhook] duplicate message detected, skipping')
+                    return
+                }
+                log.info(
+                    { module: 'webhook', conversationId: conv.id.toString(), mid },
+                    '[webhook] message stored'
+                )
+            } else {
+                // Fallback for messages without mid
+                db.insert(messages)
+                    .values({
+                        conversationId: conv.id,
+                        fromId: senderId,
+                        text,
+                        metadata: messageMetadata
+                    })
+                    .then(() => {
+                        log.info(
+                            { module: 'webhook', conversationId: conv.id.toString() },
+                            '[webhook] message stored'
+                        )
+                    })
+                    .catch((err) => {
+                        log.error({ module: 'webhook', error: String(err) }, '[webhook] message insert failed')
+                    })
+            }
+        }
+
         // Fire-and-forget Instagram user info enrichment (non-blocking)
         if (isNewConversation) {
             tokenService
@@ -738,22 +786,6 @@ export class InstagramWebhookService {
                 })
                 .catch((err) => {
                     log.warn({ module: 'webhook', error: String(err) }, '[webhook] instagram info fetch failed')
-                })
-        }
-
-        if (env.INSTAGRAM_BUSINESS_ID && text) {
-            db.insert(messages)
-                .values({
-                    conversationId: conv.id,
-                    fromId: senderId,
-                    text,
-                    metadata: messageMetadata
-                })
-                .then(() => {
-                    log.info({ module: 'webhook', conversationId: conv.id.toString() }, '[webhook] message stored')
-                })
-                .catch((err) => {
-                    log.error({ module: 'webhook', error: String(err) }, '[webhook] message insert failed')
                 })
         }
 

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "messages_mid_unique_idx" ON "messages" USING btree ("mid") WHERE "messages"."mid" is not null;

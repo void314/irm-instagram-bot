@@ -1,3 +1,4 @@
+import { isNotNull } from 'drizzle-orm'
 import {
     bigint,
     boolean,
@@ -10,6 +11,7 @@ import {
     pgTable,
     text,
     timestamp,
+    uniqueIndex,
     vector
 } from 'drizzle-orm/pg-core'
 
@@ -30,17 +32,23 @@ export const conversations = pgTable('conversations', {
     metadata: jsonb('metadata').$type<Record<string, unknown>>()
 })
 
-export const messages = pgTable('messages', {
-    id: bigint({ mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
-    conversationId: bigint('conversation_id', { mode: 'bigint' })
-        .notNull()
-        .references(() => conversations.id, { onDelete: 'cascade' }),
-    mid: text('mid'),
-    fromId: text('from_id').notNull(),
-    text: text('text'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    metadata: jsonb('metadata').$type<Record<string, unknown>>()
-})
+export const messages = pgTable(
+    'messages',
+    {
+        id: bigint({ mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+        conversationId: bigint('conversation_id', { mode: 'bigint' })
+            .notNull()
+            .references(() => conversations.id, { onDelete: 'cascade' }),
+        mid: text('mid'),
+        fromId: text('from_id').notNull(),
+        text: text('text'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        metadata: jsonb('metadata').$type<Record<string, unknown>>()
+    },
+    (table) => ({
+        midUniqueIdx: uniqueIndex('messages_mid_unique_idx').on(table.mid).where(isNotNull(table.mid))
+    })
+)
 
 export const documents = pgTable('documents', {
     id: bigint({ mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),

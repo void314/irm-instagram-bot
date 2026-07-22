@@ -4,7 +4,8 @@ import {
     getConversationContext,
     getLastBotMessage,
     incrementMessageCount,
-    updateConversationMetadata
+    updateConversationMetadata,
+    updateConversationSummary
 } from '../../services/rag/context'
 import { detectIntentLLM, getFastIntentResponse } from '../../services/rag/intent'
 import { detectLanguage } from '../../services/rag/language'
@@ -62,27 +63,15 @@ export interface RagResponse {
     debug?: RagDebug
 }
 
-function buildDialogueForExtraction(query: string, history: string, answer: string): string {
-    const lines: string[] = []
-    if (history && history !== 'нет') {
-        lines.push('Предыдущий диалог:')
-        lines.push(history)
-        lines.push('')
-    }
-    lines.push(`Пользователь: ${query}`)
-    lines.push(`Ассистент: ${answer}`)
-    return lines.join('\n')
-}
-
 async function extractPatientData(
     query: string,
-    history: string,
+    _history: string,
     answer: string,
     patient: PatientInfo | null,
     senderId: string
 ): Promise<void> {
     if (!patient) return
-    const dialogue = buildDialogueForExtraction(query, history || 'нет', answer)
+    const dialogue = `Пользователь: ${query}\nАссистент: ${answer}`
     const updates = await extractPatientInfoFromDialogue(dialogue, patient)
     if (Object.keys(updates).length > 0) {
         await updatePatient(senderId, updates)
@@ -507,6 +496,13 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         incrementMessageCount(context.conversationId).catch((err) =>
             log.error({ module: 'orchestrator', error: String(err) }, 'Failed to increment message count')
         )
+
+        const newMessageCount = messageCount + 1
+        if (newMessageCount >= 8 && newMessageCount % 4 === 0) {
+            updateConversationSummary(context.conversationId).catch((err) =>
+                log.warn({ module: 'orchestrator', error: String(err) }, 'Failed to update summary')
+            )
+        }
 
         const isClarifying = answer.length < 100 && answer.trim().endsWith('?')
         if (!isClarifying) {

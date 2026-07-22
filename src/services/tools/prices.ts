@@ -1,7 +1,7 @@
 import { and, asc, eq, gte, ilike, isNotNull, or } from 'drizzle-orm'
 
 import { env } from '../../config/constants'
-import { findBranchByNameOrCity, getBranchesList } from '../../constants/branches'
+import { buildBranchClarificationPrompt, findBranchByNameOrCity } from '../../constants/branches'
 import { hasOwnPriceList, resolveFallbackBranchRef1cId } from '../../constants/priceLists'
 import { db } from '../../db/client'
 import { services } from '../../db/schema'
@@ -150,7 +150,7 @@ export const pricesTool: Tool = {
         if (!resolvedBranchRef) {
             return {
                 success: true,
-                answer: `Пожалуйста, уточните филиал клиники.\nДоступные филиалы:\n${getBranchesList()}`,
+                answer: buildBranchClarificationPrompt(branchName),
                 found: false
             }
         }

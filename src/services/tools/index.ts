@@ -18,6 +18,7 @@ function enrichPricesArgs(args: Record<string, unknown>, patient?: PatientInfo |
 
     if (!enriched.branch_ref1c_id && !enriched.branch_name && patient.preferredBranchRef1cId) {
         enriched.branch_ref1c_id = patient.preferredBranchRef1cId
+        enriched.branch_name = patient.preferredBranch
     }
 
     if (!enriched.citizenship && patient.citizenship) {
@@ -27,9 +28,22 @@ function enrichPricesArgs(args: Record<string, unknown>, patient?: PatientInfo |
     return enriched
 }
 
+function enrichScheduleArgs(args: Record<string, unknown>, patient?: PatientInfo | null): Record<string, unknown> {
+    if (!patient) return args
+
+    const enriched = { ...args }
+
+    if (!enriched.branch_ref1c_id && !enriched.branch_name && patient.preferredBranchRef1cId) {
+        enriched.branch_ref1c_id = patient.preferredBranchRef1cId
+        enriched.branch_name = patient.preferredBranch
+    }
+
+    return enriched
+}
+
 const toolMap: Record<string, ToolFn> = {
     get_prices: (args, patient) => pricesTool.execute(enrichPricesArgs(args, patient)),
-    get_doctor_schedule: (args) => scheduleTool.execute(args)
+    get_doctor_schedule: (args, patient) => scheduleTool.execute(enrichScheduleArgs(args, patient))
 }
 
 export function getToolDefinitions(): ToolDefinition[] {

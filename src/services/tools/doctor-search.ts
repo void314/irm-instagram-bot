@@ -13,7 +13,7 @@ export interface MDoctor {
     isCalendarActive: boolean
     department: {
         name: string
-        branch: { name: string }
+        branch: { ref1cId: string; name: string }
     } | null
 }
 
@@ -167,7 +167,12 @@ async function fetchAllDoctors(): Promise<MDoctor[]> {
     return allDoctors
 }
 
-export async function findDoctors(query: string, limit = 5): Promise<MDoctor[]> {
+// branchRef1cId — ID филиала в 1С. Фильтруем СТРОГО по этому ID, а не по названию
+// филиала: внешний API возвращает department.branch.name на латинице ("IRM Clinic
+// Almaty"), а наш справочник филиалов (src/constants/branches.ts) — на кириллице
+// ("IRM Алматы"). Сравнение по названию никогда не совпадёт между собой, поэтому
+// единственный надёжный ключ — ref1cId, который идентичен в обеих системах.
+export async function findDoctors(query: string, limit = 5, branchRef1cId?: string): Promise<MDoctor[]> {
     const words = query
         .toLowerCase()
         .split(/\s+/)
@@ -178,12 +183,25 @@ export async function findDoctors(query: string, limit = 5): Promise<MDoctor[]> 
     try {
         const allDoctors = await fetchAllDoctors()
 
-        const scored = allDoctors
+        const filteredDoctors = branchRef1cId
+            ? allDoctors.filter((d) => d.department?.branch?.ref1cId === branchRef1cId)
+            : allDoctors
+
+        const scored = filteredDoctors
             .map((d) => ({ doctor: d, score: matchScore(d, words) }))
             .filter((d) => d.score > 0)
             .sort((a, b) => b.score - a.score)
 
-        log.info({ module: 'tools', query, matches: scored.length, total: allDoctors.length }, 'doctor search')
+        log.info(
+            {
+                module: 'tools',
+                query,
+                branchFilter: branchRef1cId,
+                matches: scored.length,
+                total: allDoctors.length
+            },
+            'doctor search'
+        )
 
         return scored.slice(0, limit).map((d) => d.doctor)
     } catch (err) {
