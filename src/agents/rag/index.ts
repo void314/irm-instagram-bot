@@ -103,7 +103,7 @@ export async function processRagQuery(
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: query }
             ],
-            { tools, tool_choice: 'auto', model: 'deepseek/deepseek-v4-flash' }
+            { tools, tool_choice: 'auto', model: env.RAG_MODEL }
         )
     }
 

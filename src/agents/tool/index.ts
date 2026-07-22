@@ -1,3 +1,4 @@
+import { env } from '../../config/constants'
 import { getBranchesList } from '../../constants/branches'
 import { chat } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
@@ -37,7 +38,7 @@ async function extractCitizenshipFromQuery(query: string): Promise<'kz' | 'forei
                 { role: 'user', content: query }
             ],
             {
-                model: 'deepseek/deepseek-v4-flash',
+                model: env.TOOL_MODEL,
                 temperature: 0,
                 max_tokens: 30,
                 response_format: { type: 'json_object' }

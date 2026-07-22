@@ -1,5 +1,6 @@
 import { and, eq, inArray } from 'drizzle-orm'
 
+import { env } from '../../config/constants'
 import { db } from '../../db/client'
 import { kbSuggestions, learnChunks, learningDocs, responseFeedback } from '../../db/schema'
 import { chat, generateEmbedding } from '../../services/llm/openrouter'
@@ -40,7 +41,7 @@ export async function processCorrection(feedbackId: bigint) {
                 content: `Вопрос пользователя: ${feedback.query}\nОтвет ИИ: ${feedback.originalResponse}\nИсправление админа: ${feedback.correctedResponse}\nПричина (если есть): ${feedback.correctionReason || 'нет'}`
             }
         ],
-        { model: 'qwen/qwen3.7-max' }
+        { model: env.SYNTHESIS_MODEL }
     )
 
     const coreFact = extractionResponse.content

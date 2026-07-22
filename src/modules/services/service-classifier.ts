@@ -1,5 +1,6 @@
 import { isNotNull } from 'drizzle-orm'
 
+import { env } from '../../config/constants'
 import {
     DEFAULT_SERVICE_CATEGORY,
     SERVICE_CATEGORIES,
@@ -72,7 +73,7 @@ async function classifyBatch(names: string[]): Promise<Map<string, ServiceCatego
                 { role: 'user', content: JSON.stringify(names) }
             ],
             {
-                model: 'openai/gpt-4o-mini',
+                model: env.INTENT_MODEL,
                 temperature: 0,
                 max_tokens: 4000,
                 response_format: { type: 'json_object' }

@@ -1,3 +1,4 @@
+import { env } from '../../config/constants'
 import { chat } from '../../services/llm/openrouter'
 import { IRM_BASE } from '../../services/rag/prompts'
 
@@ -71,7 +72,7 @@ export async function synthesizeFinalAnswer(
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: query }
             ],
-            { model: 'qwen/qwen3.7-max', temperature: 0.3, max_tokens: 800 }
+            { model: env.SYNTHESIS_MODEL, temperature: 0.3, max_tokens: 800 }
         )
         return result.content.trim()
     } catch {

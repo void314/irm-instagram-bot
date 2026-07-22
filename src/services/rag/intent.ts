@@ -1,3 +1,4 @@
+import { env } from '../../config/constants'
 import { chat } from '../llm/openrouter'
 
 export interface IntentResult {
@@ -187,7 +188,7 @@ export async function detectIntentLLM(query: string, lastBotMessage?: string | n
                 { role: 'user', content: query }
             ],
             {
-                model: 'openai/gpt-4o-mini',
+                model: env.INTENT_MODEL,
                 temperature: 0,
                 max_tokens: 50,
                 response_format: { type: 'json_object' }

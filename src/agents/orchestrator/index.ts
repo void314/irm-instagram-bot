@@ -314,10 +314,10 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     // If primary agent has critical gaps → iterative loop
     if (result.gaps.some((g) => g.priority === 'critical')) {
         state.openGaps = result.gaps
+        const seenGaps = new Set<string>(state.openGaps.map((g) => g.type))
 
         while (state.iteration < MAX_PIPELINE_ITERATIONS) {
             state.iteration++
-            const prevGapKey = state.openGaps.map((g) => g.type).join(',')
 
             const nextAgent = selectNextAgent(state.openGaps, calledAgents)
             if (!nextAgent) break
@@ -331,15 +331,19 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
             state.accumulatedContent.push(nextResult.content)
             state.openGaps = nextResult.gaps
 
-            // Loop detection: gaps unchanged → prevent infinite loop
-            const newGapKey = state.openGaps.map((g) => g.type).join(',')
-            if (prevGapKey === newGapKey) {
+            // Loop detection: prevent ping-pong by tracking all seen gaps
+            const newGapsTypes = state.openGaps.map((g) => g.type)
+            const hasNewGaps = newGapsTypes.some((type) => !seenGaps.has(type))
+
+            if (!hasNewGaps && newGapsTypes.length > 0) {
                 log.info(
-                    { module: 'orchestrator', iteration: state.iteration, gaps: newGapKey },
-                    'Pipeline loop detected, breaking'
+                    { module: 'orchestrator', iteration: state.iteration, gaps: newGapsTypes.join(',') },
+                    'Pipeline loop detected (ping-pong), breaking'
                 )
                 break
             }
+
+            newGapsTypes.forEach((type) => seenGaps.add(type))
 
             // Early exit if target agent returned high confidence with no gaps
             if (nextResult.confidence === 'high' && nextResult.gaps.length === 0) break

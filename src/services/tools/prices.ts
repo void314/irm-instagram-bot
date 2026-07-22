@@ -1,5 +1,6 @@
 import { and, asc, eq, gte, ilike, isNotNull, or } from 'drizzle-orm'
 
+import { env } from '../../config/constants'
 import { findBranchByNameOrCity, getBranchesList } from '../../constants/branches'
 import { db } from '../../db/client'
 import { services } from '../../db/schema'
@@ -108,7 +109,7 @@ async function formatCategorySummaryWithLLM(rows: CategoryRow[], lang: 'ru' | 'k
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: JSON.stringify(payload) }
             ],
-            { model: 'openai/gpt-4o-mini', temperature: 0.4, max_tokens: 400 }
+            { model: env.INTENT_MODEL, temperature: 0.4, max_tokens: 400 }
         )
         return result.content.trim()
     } catch (err) {

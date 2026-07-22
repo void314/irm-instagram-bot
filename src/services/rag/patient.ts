@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm'
 
+import { env } from '../../config/constants'
 import { findBranchByNameOrCity } from '../../constants/branches'
 import { db } from '../../db/client'
 import { patients } from '../../db/schema'
@@ -178,7 +179,7 @@ export async function extractPatientInfoFromDialogue(
                 { role: 'system', content: EXTRACTION_PROMPT },
                 { role: 'user', content: dialogue }
             ],
-            { model: 'openai/gpt-4o-mini', response_format: { type: 'json_object' } }
+            { model: env.INTENT_MODEL, response_format: { type: 'json_object' } }
         )
 
         rawContent = answer.content
