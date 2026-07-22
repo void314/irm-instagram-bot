@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm'
 import { runPipeline } from '../../../agents/orchestrator'
 import { env } from '../../../config/constants'
 import { db } from '../../../db/client'
-import { accounts, conversations, messages } from '../../../db/schema'
+import { accounts, comments, conversations, messages } from '../../../db/schema'
 import { log } from '../../../services/logger'
 import { ensurePatient, fetchInstagramUserInfo, updatePatient } from '../../../services/rag/patient'
 import { describeImage, transcribeAudio } from '../../../services/transcription'
@@ -115,8 +115,97 @@ export class InstagramMessagingService {
     }
 }
 
+export class InstagramCommentService {
+    public async replyToComment(commentId: string, text: string): Promise<SendMessageResult> {
+        let pageToken: string | null = null
+
+        if (env.INSTAGRAM_BUSINESS_ID) {
+            pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
+        }
+
+        if (!pageToken) {
+            return { status: 'error', message: 'No page access token available' }
+        }
+
+        const url = new URL(`https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION}/${commentId}/replies`)
+        url.searchParams.set('access_token', pageToken)
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ message: text })
+        })
+
+        const data = (await response.json()) as { error?: { message?: string } } & {
+            id?: string
+        }
+
+        if (!response.ok) {
+            return {
+                status: 'error',
+                message: data?.error?.message || 'Instagram comment reply failed'
+            }
+        }
+
+        return {
+            status: 'ok',
+            recipient_id: commentId,
+            message_id: data.id
+        }
+    }
+
+    public async isOwnMedia(mediaId: string): Promise<boolean> {
+        if (!env.INSTAGRAM_BUSINESS_ID) return false
+
+        let pageToken: string | null = null
+        if (env.INSTAGRAM_BUSINESS_ID) {
+            pageToken = await tokenService.getDecryptedToken(env.INSTAGRAM_BUSINESS_ID)
+        }
+        if (!pageToken) return false
+
+        const url = new URL(`https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION}/${mediaId}`)
+        url.searchParams.set('access_token', pageToken)
+        url.searchParams.set('fields', 'owner')
+
+        try {
+            const response = await fetch(url)
+            if (!response.ok) return false
+            const data = (await response.json()) as { owner?: { id?: string } }
+            return data?.owner?.id === env.INSTAGRAM_BUSINESS_ID
+        } catch {
+            return false
+        }
+    }
+}
+
 export class InstagramWebhookService {
-    constructor(private readonly instagramMessagingService = new InstagramMessagingService()) {}
+    constructor(
+        private readonly instagramMessagingService = new InstagramMessagingService(),
+        private readonly instagramCommentService = new InstagramCommentService()
+    ) {}
+
+    private async subscribeField(
+        entityId: string,
+        fields: string,
+        token: string
+    ): Promise<{ ok: true; data: unknown } | { ok: false; error: string }> {
+        const base = `https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION || 'v25.0'}`
+        const url = new URL(`${base}/${entityId}/subscribed_apps`)
+        url.searchParams.set('subscribed_fields', fields)
+        url.searchParams.set('access_token', token)
+
+        const response = await fetch(url, { method: 'POST' })
+        const data = await response.json()
+
+        if (!response.ok) {
+            const fbError = (data as { error?: { message?: string } })?.error
+            return { ok: false, error: fbError?.message || 'Subscription failed' }
+        }
+
+        return { ok: true, data }
+    }
 
     public async subscribePage() {
         let pageToken: string | null = null
@@ -131,24 +220,25 @@ export class InstagramWebhookService {
             } as SubscribeErrorResponse400)
         }
 
-        const base = `https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION || 'v25.0'}`
-        const url = new URL(`${base}/${env.FACEBOOK_PAGE_ID}/subscribed_apps`)
-        url.searchParams.set('subscribed_fields', 'messages')
-        url.searchParams.set('access_token', pageToken)
-
-        const response = await fetch(url, { method: 'POST' })
-        const data = await response.json()
-
-        if (!response.ok) {
+        const pageResult = await this.subscribeField(env.FACEBOOK_PAGE_ID, 'messages', pageToken)
+        if (!pageResult.ok) {
             return status(400, {
-                error: 'Failed to subscribe page to webhook',
+                error: pageResult.error,
                 hint: SUBSCRIBE_PERMISSION_HINT
             } as SubscribeErrorResponse400)
         }
 
+        let igResult: { ok: true; data: unknown } | { ok: false; error: string } | null = null
+
+        if (env.INSTAGRAM_BUSINESS_ID) {
+            igResult = await this.subscribeField(env.INSTAGRAM_BUSINESS_ID, 'comments,mentions', pageToken)
+        }
+
         return {
             success: true,
-            response: data,
+            page: pageResult.data,
+            ig: igResult && 'data' in igResult ? igResult.data : null,
+            igError: igResult && 'error' in igResult ? igResult.error : null,
             hint: null
         } as SubscribeResponse200
     }
@@ -306,14 +396,31 @@ export class InstagramWebhookService {
     private async processChangeEvent(
         change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]
     ) {
-        if (change.field !== 'messages') {
-            return
+        if (change.field === 'messages') {
+            await this.processMessageChange(change)
+        } else if (change.field === 'comments') {
+            await this.processCommentEvent(change)
+        } else if (change.field === 'mentions') {
+            await this.processMentionEvent(change)
         }
+    }
 
-        const senderId = change.value?.from?.id
-        const recipientId = change.value?.to?.id
-        const isEcho = change.value?.is_echo
-        const text = change.value?.message?.text
+    private async processMessageChange(
+        change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]
+    ) {
+        const changeValue = change.value as
+            | {
+                  from?: { id?: string }
+                  to?: { id?: string }
+                  is_echo?: boolean
+                  message?: { text?: string; attachments?: Array<{ type?: string; payload?: { url?: string } }> }
+              }
+            | undefined
+
+        const senderId = changeValue?.from?.id
+        const recipientId = changeValue?.to?.id
+        const isEcho = changeValue?.is_echo
+        const text = changeValue?.message?.text
 
         if (!senderId || isEcho) {
             return
@@ -326,7 +433,7 @@ export class InstagramWebhookService {
         let finalText = text ?? null
         let messageMetadata: Record<string, unknown> | undefined
 
-        const attachments = change.value?.message?.attachments || []
+        const attachments = changeValue?.message?.attachments || []
 
         // Audio transcription
         if (!finalText) {
@@ -386,6 +493,188 @@ export class InstagramWebhookService {
             log.info({ module: 'webhook', senderId, recipientId }, '[webhook] change event handled')
             await this.handleIncomingMessage(senderId, finalText, messageMetadata)
         }
+    }
+
+    private async processCommentEvent(
+        change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]
+    ) {
+        const value = change.value as
+            | {
+                  id?: string
+                  media_id?: string
+                  text?: string
+                  from?: { id?: string; username?: string }
+              }
+            | undefined
+
+        const commentId = value?.id
+        const mediaId = value?.media_id
+        const text = value?.text
+        const senderId = value?.from?.id
+        const senderUsername = value?.from?.username
+
+        if (!commentId || !senderId) return
+
+        if (env.INSTAGRAM_BUSINESS_ID && senderId === env.INSTAGRAM_BUSINESS_ID) return
+        if (!mediaId) return
+
+        log.info({ module: 'webhook', commentId, mediaId, senderId }, '[webhook] comment event received')
+
+        const ownMedia = await this.instagramCommentService.isOwnMedia(mediaId)
+        if (!ownMedia) {
+            log.info(
+                { module: 'webhook', commentId, mediaId },
+                '[webhook] comment on non-owned media, skipping reply'
+            )
+            await this.storeComment(commentId, mediaId, senderId, senderUsername, text, null, false, null)
+            return
+        }
+
+        const isQuestion = this.isQuestionText(text || '')
+        log.info({ module: 'webhook', commentId, isQuestion }, '[webhook] comment classified')
+
+        if (!isQuestion) {
+            await this.storeComment(commentId, mediaId, senderId, senderUsername, text, null, false, null)
+            return
+        }
+
+        await this.handleCommentWithReply(commentId, mediaId, senderId, senderUsername, text || '')
+    }
+
+    private async processMentionEvent(
+        change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]
+    ) {
+        const value = change.value as
+            | {
+                  comment_id?: string
+                  media_id?: string
+                  text?: string
+                  from?: { id?: string; username?: string }
+              }
+            | undefined
+
+        const commentId = value?.comment_id
+        const mediaId = value?.media_id
+        const text = value?.text
+        const senderId = value?.from?.id
+        const senderUsername = value?.from?.username
+
+        if (!commentId || !senderId) return
+
+        if (env.INSTAGRAM_BUSINESS_ID && senderId === env.INSTAGRAM_BUSINESS_ID) return
+
+        log.info({ module: 'webhook', commentId, mediaId, senderId, text }, '[webhook] mention event received')
+
+        if (!mediaId) {
+            await this.storeComment(commentId, null, senderId, senderUsername, text, null, false, null)
+            return
+        }
+
+        const ownMedia = await this.instagramCommentService.isOwnMedia(mediaId)
+        if (!ownMedia) {
+            log.info(
+                { module: 'webhook', commentId, mediaId },
+                '[webhook] mention on non-owned media, storing only'
+            )
+            await this.storeComment(commentId, mediaId, senderId, senderUsername, text, null, false, null)
+            return
+        }
+
+        const isQuestion = this.isQuestionText(text || '')
+        log.info({ module: 'webhook', commentId, isQuestion }, '[webhook] mention classified')
+
+        if (!isQuestion) {
+            await this.storeComment(commentId, mediaId, senderId, senderUsername, text, null, false, null)
+            return
+        }
+
+        await this.handleCommentWithReply(commentId, mediaId, senderId, senderUsername, text || '')
+    }
+
+    private isQuestionText(text: string): boolean {
+        const trimmed = text.trim()
+        if (trimmed.endsWith('?')) return true
+        if (trimmed.endsWith('؟')) return true
+        if (trimmed.length > 20) return true
+        return false
+    }
+
+    private async storeComment(
+        commentId: string,
+        mediaId: string | null,
+        senderId: string,
+        senderUsername: string | null | undefined,
+        text: string | null | undefined,
+        parentId: string | null,
+        fromBusiness: boolean,
+        answerText: string | null
+    ) {
+        try {
+            await db.insert(comments).values({
+                commentId,
+                mediaId,
+                senderId,
+                senderUsername: senderUsername ?? null,
+                text: text ?? null,
+                parentId,
+                fromBusiness,
+                isQuestion: !fromBusiness && this.isQuestionText(text ?? ''),
+                answerText
+            })
+        } catch (err) {
+            log.error({ module: 'webhook', commentId, error: String(err) }, '[webhook] failed to store comment')
+        }
+    }
+
+    private async handleCommentWithReply(
+        commentId: string,
+        mediaId: string,
+        senderId: string,
+        senderUsername: string | null | undefined,
+        text: string
+    ) {
+        log.info({ module: 'webhook', commentId, mediaId, senderId }, '[webhook] processing comment with reply')
+
+        await ensurePatient(senderId)
+
+        let answer: string
+        let intent = 'query'
+
+        try {
+            const result = await runPipeline(text)
+            answer = result.answer
+            intent = result.intent
+        } catch (err) {
+            log.error({ module: 'webhook', error: String(err) }, '[webhook] pipeline error for comment')
+            answer = env.WEBHOOK_AUTO_REPLY_TEXT
+        }
+
+        const replyResult = await this.instagramCommentService.replyToComment(commentId, answer)
+
+        if (replyResult.status === 'error') {
+            log.error(
+                { module: 'webhook', commentId, error: replyResult.message },
+                '[webhook] comment reply failed'
+            )
+        } else {
+            log.info(
+                { module: 'webhook', commentId, intent, answerLength: answer.length },
+                '[webhook] comment reply sent'
+            )
+        }
+
+        await this.storeComment(commentId, mediaId, senderId, senderUsername, text, null, false, answer)
+
+        await this.storeComment(
+            commentId + '_reply',
+            mediaId,
+            senderId,
+            senderUsername,
+            answer,
+            commentId,
+            true,
+            null
+        )
     }
 
     private async handleIncomingMessage(

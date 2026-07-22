@@ -64,23 +64,3 @@ This repository is a backend service for an AI assistant that handles Instagram 
 
 - See `docs/` for implementation notes and Instagram API references.
 
----
-
-### When using shell commands always prefer RTK.
-
-Instead of:
-
-`git status` use `rtk git status`
-
-Instead of:
-
-`cat` use `rtk cat`
-
-Instead of:
-
-`grep` use `rtk grep`
-
-Instead of:
-
-`find` use `rtk find`
-

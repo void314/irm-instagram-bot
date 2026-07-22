@@ -2,7 +2,7 @@ import { env } from '../../config/constants'
 import { chat } from '../llm/openrouter'
 
 export interface IntentResult {
-    type:
+    intents: Array<
         | 'greeting'
         | 'goodbye'
         | 'gratitude'
@@ -13,6 +13,7 @@ export interface IntentResult {
         | 'booking_decline'
         | 'prices'
         | 'provide_name'
+    >
 }
 
 const GOODBYE_RESPONSES: Record<'ru' | 'kk' | 'en', string> = {
@@ -123,7 +124,8 @@ export function getNameAcknowledgeResponse(name: string, language: 'ru' | 'kk' |
 
 function buildClassificationPrompt(lastBotMessage?: string | null): string {
     let prompt = `Ты — классификатор намерений пользователя для клиники репродукции IRM.
-Проанализируй сообщение пользователя и верни ТОЛЬКО ОДИН интент из списка ниже в формате JSON: {"intent": "..."}.
+Проанализируй сообщение пользователя и верни МАССИВ интентов (от 1 до 3) в формате JSON: {"intents": ["...", "..."]}.
+Если пользователь задает несколько вопросов разного характера, верни несколько интентов. Например, если он здоровается и спрашивает цену, верни ["greeting", "prices"].
 
 Возможные интенты:
 - "greeting": приветствия (здравствуйте, привет, hello, сәлем и т.д.)
@@ -190,21 +192,32 @@ export async function detectIntentLLM(query: string, lastBotMessage?: string | n
             {
                 model: env.INTENT_MODEL,
                 temperature: 0,
-                max_tokens: 50,
+                max_tokens: 100,
                 response_format: { type: 'json_object' }
             }
         )
 
         const parsed = JSON.parse(result.content)
-        const type = parsed.intent || parsed.type || 'query'
 
-        if (VALID_TYPES.includes(type)) {
-            return { type: type as IntentResult['type'] }
+        // Поддержка как нового массива, так и старого формата
+        let types: string[] = []
+        if (Array.isArray(parsed.intents)) {
+            types = parsed.intents
+        } else if (typeof parsed.intent === 'string') {
+            types = [parsed.intent]
+        } else if (typeof parsed.type === 'string') {
+            types = [parsed.type]
         }
 
-        return { type: 'query' }
+        const validIntents = types.filter((t) => VALID_TYPES.includes(t)) as IntentResult['intents']
+
+        if (validIntents.length > 0) {
+            return { intents: validIntents }
+        }
+
+        return { intents: ['query'] }
     } catch (e) {
         console.error('LLM Intent detection failed:', e)
-        return { type: 'query' }
+        return { intents: ['query'] }
     }
 }

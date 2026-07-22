@@ -111,6 +111,21 @@ export const accounts = pgTable('accounts', {
     metadata: jsonb('metadata').$type<Record<string, unknown>>()
 })
 
+export const comments = pgTable('comments', {
+    id: bigint({ mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    commentId: text('comment_id').notNull().unique(),
+    mediaId: text('media_id'),
+    senderId: text('sender_id').notNull(),
+    senderUsername: text('sender_username'),
+    text: text('text'),
+    parentId: text('parent_id'),
+    fromBusiness: boolean('from_business').default(false).notNull(),
+    isQuestion: boolean('is_question').default(false),
+    answerText: text('answer_text'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at').defaultNow().notNull()
+})
+
 export const responseFeedback = pgTable('response_feedback', {
     id: bigint({ mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
     responseId: text('response_id'),

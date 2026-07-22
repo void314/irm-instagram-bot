@@ -28,17 +28,33 @@ export const AGENTS: AgentDescriptor[] = [
     }
 ]
 
-export function selectNextAgent(gaps: Gap[], calledAgents: string[]): AgentDescriptor | null {
-    const criticalGap = gaps.find((g) => g.priority === 'critical')
-    const targetGap = criticalGap ?? gaps[0]
-    if (!targetGap) return null
+export function selectNextAgents(gaps: Gap[], calledAgents: string[]): AgentDescriptor[] {
+    const candidates: AgentDescriptor[] = []
 
-    const candidate = AGENTS.find((a) => a.fillsGaps.includes(targetGap.type) && !calledAgents.includes(a.name))
+    // Пытаемся найти агента для каждого critical gap
+    const criticalGaps = gaps.filter((g) => g.priority === 'critical')
+    const targetGaps = criticalGaps.length > 0 ? criticalGaps : gaps
 
-    if (candidate) return candidate
+    for (const targetGap of targetGaps) {
+        let candidate = AGENTS.find(
+            (a) =>
+                a.fillsGaps.includes(targetGap.type) &&
+                !calledAgents.includes(a.name) &&
+                !candidates.some((c) => c.name === a.name)
+        )
 
-    // fallback: любой агент умеющий этот gap, даже если уже вызывали
-    return AGENTS.find((a) => a.fillsGaps.includes(targetGap.type)) ?? null
+        if (!candidate) {
+            candidate = AGENTS.find(
+                (a) => a.fillsGaps.includes(targetGap.type) && !candidates.some((c) => c.name === a.name)
+            )
+        }
+
+        if (candidate) {
+            candidates.push(candidate)
+        }
+    }
+
+    return candidates
 }
 
 export function getAgentNames(): string[] {

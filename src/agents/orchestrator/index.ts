@@ -16,12 +16,12 @@ import {
     updatePatient
 } from '../../services/rag/patient'
 import { handleBookingIntent } from '../booking/service'
-import { appendNameQuestion, handleConversationIntent, personalizeAnswer } from '../conversation'
+import { handleConversationIntent } from '../conversation'
 import { checkAndHandleObjection } from '../objection'
 import { processRagQuery } from '../rag'
-import { selectNextAgent } from '../registry'
+import { selectNextAgents } from '../registry'
 import { handlePriceIntent } from '../tool'
-import type { AgentResult, Gap, PipelineState } from '../types'
+import type { AgentResult, PipelineState } from '../types'
 import { synthesizeFinalAnswer } from './synthesis'
 
 const BOOKING_DECLINE_RESPONSE: Record<'ru' | 'kk' | 'en', string> = {
@@ -177,53 +177,81 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         : Promise.resolve(null)
 
     const intentResult = await detectIntentLLM(query, lastBotMessage)
-    debug.intentType = intentResult.type
-    log.info({ module: 'orchestrator', intent: intentResult.type, language: effectiveLang }, 'Intent detected')
+    const detectedIntents = intentResult.intents || ['query']
+    debug.intentType = detectedIntents.join(',')
+    log.info({ module: 'orchestrator', intents: detectedIntents, language: effectiveLang }, 'Intents detected')
 
     const isFirstMessage = messageCount === 0
 
-    // --- Fast Path: Conversation Intents ---
-    if (
-        context &&
-        ['greeting', 'goodbye', 'gratitude', 'clear_context', 'provide_name'].includes(intentResult.type)
-    ) {
-        const convRes = await handleConversationIntent(
-            query,
-            effectiveLang,
-            context.senderId,
-            context.conversationId,
-            intentResult.type,
-            isFirstMessage
-        )
-        if (convRes) {
-            if (context) await incrementMessageCount(context.conversationId)
+    const substantiveIntents = detectedIntents.filter(
+        (i) =>
+            !['greeting', 'goodbye', 'gratitude', 'clear_context', 'provide_name', 'booking_decline'].includes(i)
+    )
+
+    // --- Pure Fast Paths (when no substantive intent is present) ---
+    if (substantiveIntents.length === 0) {
+        if (context && detectedIntents.includes('clear_context')) {
+            const convRes = await handleConversationIntent(
+                query,
+                effectiveLang,
+                context.senderId,
+                context.conversationId,
+                'clear_context',
+                isFirstMessage
+            )
+            if (convRes) {
+                await incrementMessageCount(context.conversationId)
+                const res: RagResponse = {
+                    answer: convRes.content,
+                    contextChunks: [],
+                    intent: 'clear_context',
+                    needsClarification: false
+                }
+                if (verbose) res.debug = debug
+                return res
+            }
+        }
+
+        if (context && detectedIntents.includes('booking_decline')) {
+            await updatePatient(context.senderId, { bookingNudgeOffered: true })
+            await incrementMessageCount(context.conversationId)
             const res: RagResponse = {
-                answer: convRes.content,
+                answer: BOOKING_DECLINE_RESPONSE[effectiveLang],
                 contextChunks: [],
-                intent: intentResult.type,
+                intent: 'booking_decline',
                 needsClarification: false
             }
             if (verbose) res.debug = debug
             return res
         }
-    }
 
-    // --- Fast Path: Booking Intent ---
-    if (context && intentResult.type === 'booking') {
-        const result = await handleBookingIntent(query, context.senderId, history || '', effectiveLang)
-        await incrementMessageCount(context.conversationId)
-
-        const res: RagResponse = {
-            answer: result.content,
-            contextChunks: [],
-            intent: 'booking',
-            needsClarification: false
+        // Handle other simple conversation intents
+        for (const intent of ['greeting', 'goodbye', 'gratitude', 'provide_name'] as const) {
+            if (context && detectedIntents.includes(intent as any)) {
+                const convRes = await handleConversationIntent(
+                    query,
+                    effectiveLang,
+                    context.senderId,
+                    context.conversationId,
+                    intent,
+                    isFirstMessage
+                )
+                if (convRes) {
+                    await incrementMessageCount(context.conversationId)
+                    const res: RagResponse = {
+                        answer: convRes.content,
+                        contextChunks: [],
+                        intent,
+                        needsClarification: false
+                    }
+                    if (verbose) res.debug = debug
+                    return res
+                }
+            }
         }
-        if (verbose) res.debug = debug
-        return res
     }
 
-    // --- Load patient info for remaining flows ---
+    // --- Load patient info for substantive flows ---
     if (context) {
         patient = await patientPromise
         patientStr = formatPatientContext(patient)
@@ -240,47 +268,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         }
     }
 
-    // --- Fast Path: Booking Decline ---
-    if (context && intentResult.type === 'booking_decline') {
-        await updatePatient(context.senderId, { bookingNudgeOffered: true })
-        await incrementMessageCount(context.conversationId)
-
-        const res: RagResponse = {
-            answer: BOOKING_DECLINE_RESPONSE[effectiveLang],
-            contextChunks: [],
-            intent: 'booking_decline',
-            needsClarification: false
-        }
-        if (verbose) res.debug = debug
-        return res
-    }
-
-    // --- Fast Path: Objection Intent ---
-    if (intentResult.type === 'objection') {
-        const objectionResult = await checkAndHandleObjection(query, effectiveLang, patientStr, patient, history)
-        if (objectionResult) {
-            const personalized = personalizeAnswer(objectionResult.content, patient)
-            const finalAnswer = context
-                ? await appendNameQuestion(personalized, patient, context.senderId)
-                : personalized
-
-            if (context) {
-                await incrementMessageCount(context.conversationId)
-                await extractPatientData(query, history || 'нет', finalAnswer, patient, context.senderId)
-            }
-
-            const res: RagResponse = {
-                answer: finalAnswer,
-                contextChunks: [],
-                intent: 'objection',
-                needsClarification: false
-            }
-            if (verbose) res.debug = debug
-            return res
-        }
-    }
-
-    // --- Iterative Pipeline ---
+    // --- Iterative Pipeline with Parallel Dispatch ---
     const state: PipelineState = {
         query,
         history: history || 'нет',
@@ -296,40 +284,81 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
     const calledAgents: string[] = []
 
-    // If objection fell through, treat as research query
-    const pipelineIntent = intentResult.type === 'objection' ? 'query' : intentResult.type
+    // We use substantiveIntents if available, else we fall back to detectedIntents
+    let pipelineIntents = substantiveIntents.length > 0 ? substantiveIntents : detectedIntents
 
-    // Primary dispatch
-    const primaryAgent = mapIntentToAgentName(pipelineIntent)
-    calledAgents.push(primaryAgent)
+    // If objection is present, but it falls through (checkAndHandleObjection returns null), we need to fallback.
+    // To handle objection properly as an agent, it's mapped in mapIntentToAgentName.
+    const primaryAgentsToCall = [...new Set(pipelineIntents.map(mapIntentToAgentName))]
 
-    let result = await dispatchAgent(primaryAgent, query, state, patient, history, debug)
-    if (result.updatedPatient && patient) {
-        patient = { ...patient, ...result.updatedPatient }
+    const results = await Promise.all(
+        primaryAgentsToCall.map((agentName) => {
+            calledAgents.push(agentName)
+            return dispatchAgent(agentName, query, state, patient, history, debug)
+        })
+    )
+
+    // Merge initial results
+    let anyCriticalGaps = false
+    let lowestConfidence = 'high'
+
+    for (const result of results) {
+        if (result.updatedPatient && patient) {
+            patient = { ...patient, ...result.updatedPatient }
+        }
+        if (result.content) {
+            state.accumulatedContent.push(result.content)
+        }
+        if (result.gaps.length > 0) {
+            state.openGaps.push(...result.gaps)
+        }
+        if (result.gaps.some((g) => g.priority === 'critical')) {
+            anyCriticalGaps = true
+        }
+        if (result.confidence === 'low') lowestConfidence = 'low'
+        else if (result.confidence === 'partial' && lowestConfidence !== 'low') lowestConfidence = 'partial'
     }
-    state.accumulatedContent.push(result.content)
 
-    const primaryConfidence = result.confidence
+    const primaryConfidence = lowestConfidence
 
-    // If primary agent has critical gaps → iterative loop
-    if (result.gaps.some((g) => g.priority === 'critical')) {
-        state.openGaps = result.gaps
+    // If any agent has critical gaps → iterative loop with parallel gap-filling
+    if (anyCriticalGaps) {
         const seenGaps = new Set<string>(state.openGaps.map((g) => g.type))
+
+        // Import the new multiple-agent selector if needed, or use it if available
+        // selectNextAgents is available in registry.ts
+        // Wait, selectNextAgent is currently imported, I'll update the import below
 
         while (state.iteration < MAX_PIPELINE_ITERATIONS) {
             state.iteration++
 
-            const nextAgent = selectNextAgent(state.openGaps, calledAgents)
-            if (!nextAgent) break
+            const nextAgents = selectNextAgents(state.openGaps, calledAgents)
+            if (!nextAgents || nextAgents.length === 0) break
 
-            calledAgents.push(nextAgent.name)
-            const nextResult = await dispatchAgent(nextAgent.name, query, state, patient, history, debug)
-            if (nextResult.updatedPatient && patient) {
-                patient = { ...patient, ...nextResult.updatedPatient }
+            const nextResults = await Promise.all(
+                nextAgents.map((agent) => {
+                    calledAgents.push(agent.name)
+                    return dispatchAgent(agent.name, query, state, patient, history, debug)
+                })
+            )
+
+            state.openGaps = [] // Reset gaps for this iteration, will be filled by nextResults
+
+            let iterationCriticalGaps = false
+            for (const nextResult of nextResults) {
+                if (nextResult.updatedPatient && patient) {
+                    patient = { ...patient, ...nextResult.updatedPatient }
+                }
+                if (nextResult.content) {
+                    state.accumulatedContent.push(nextResult.content)
+                }
+                if (nextResult.gaps.length > 0) {
+                    state.openGaps.push(...nextResult.gaps)
+                }
+                if (nextResult.gaps.some((g) => g.priority === 'critical')) {
+                    iterationCriticalGaps = true
+                }
             }
-
-            state.accumulatedContent.push(nextResult.content)
-            state.openGaps = nextResult.gaps
 
             // Loop detection: prevent ping-pong by tracking all seen gaps
             const newGapsTypes = state.openGaps.map((g) => g.type)
@@ -345,8 +374,9 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
             newGapsTypes.forEach((type) => seenGaps.add(type))
 
-            // Early exit if target agent returned high confidence with no gaps
-            if (nextResult.confidence === 'high' && nextResult.gaps.length === 0) break
+            // Early exit if target agents returned high confidence with no gaps
+            if (!iterationCriticalGaps && nextResults.every((r) => r.confidence === 'high' && r.gaps.length === 0))
+                break
         }
     }
 
@@ -355,7 +385,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     const askForName = !!(patient && !patient.name && !patient.nameChangeOffered)
     const shouldSuggestBooking = !!(
         context &&
-        intentResult.type === 'prices' &&
+        detectedIntents.includes('prices') &&
         patient &&
         !patient.hasBookedConsultation &&
         !patient.bookingNudgeOffered &&
@@ -363,7 +393,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     )
     const shouldNudgeBooking = !!(
         context &&
-        intentResult.type === 'query' &&
+        detectedIntents.includes('query') &&
         patient &&
         !patient.hasBookedConsultation &&
         !patient.bookingNudgeOffered &&
@@ -423,7 +453,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     const res: RagResponse = {
         answer,
         contextChunks: [],
-        intent: intentResult.type === 'prices' ? 'prices' : 'query',
+        intent: detectedIntents.includes('prices') ? 'prices' : 'query',
         needsClarification: false
     }
 

@@ -23,7 +23,7 @@ export const instagramWebhookController = new Elysia({
             detail: {
                 summary: 'Subscribe page to webhook',
                 description:
-                    'Subscribes the configured Facebook Page to receive Instagram messaging events via the webhook'
+                    'Subscribes the Facebook Page to messages and the Instagram Business Account to comments,mentions'
             }
         }
     )

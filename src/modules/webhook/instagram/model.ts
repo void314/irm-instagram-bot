@@ -28,6 +28,28 @@ export const webhookVerifyQuery = v.object({
     'hub.challenge': v.optional(v.string())
 })
 
+const instagramChangeAttachment = v.object({
+    type: v.optional(v.string()),
+    payload: v.optional(instagramAttachmentPayload)
+})
+
+const instagramChangeMessage = v.object({
+    text: v.optional(v.string()),
+    attachments: v.optional(v.array(instagramChangeAttachment))
+})
+
+const instagramChangeValue = v.object({
+    from: v.optional(instagramUserRef),
+    to: v.optional(instagramUserRef),
+    message: v.optional(instagramChangeMessage),
+    mid: v.optional(v.string()),
+    is_echo: v.optional(v.boolean()),
+    id: v.optional(v.string()),
+    comment_id: v.optional(v.string()),
+    media_id: v.optional(v.string()),
+    text: v.optional(v.string())
+})
+
 export const instagramWebhookPayload = v.object({
     object: v.optional(v.string()),
     entry: v.optional(
@@ -48,20 +70,7 @@ export const instagramWebhookPayload = v.object({
                     v.array(
                         v.object({
                             field: v.optional(v.string()),
-                            value: v.optional(
-                                v.object({
-                                    from: v.optional(instagramUserRef),
-                                    to: v.optional(instagramUserRef),
-                                    message: v.optional(
-                                        v.object({
-                                            text: v.optional(v.string()),
-                                            attachments: v.optional(v.array(instagramAttachment))
-                                        })
-                                    ),
-                                    mid: v.optional(v.string()),
-                                    is_echo: v.optional(v.boolean())
-                                })
-                            )
+                            value: v.optional(instagramChangeValue)
                         })
                     )
                 )
@@ -83,12 +92,15 @@ export const webhookEventResponse200 = v.object({
 
 export const subscribeResponse200 = v.object({
     success: v.literal(true),
-    response: v.unknown(),
+    page: v.unknown(),
+    ig: v.nullable(v.unknown()),
+    igError: v.nullable(v.string()),
     hint: v.nullable(v.string())
 })
 
 export const subscribeErrorResponse400 = v.object({
     error: v.string(),
+    fbCode: v.optional(v.number()),
     hint: v.optional(v.string())
 })
 
