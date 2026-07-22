@@ -229,7 +229,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         patientStr = formatPatientContext(patient)
 
         const detectedBranch = findBranchByNameOrCity(query)
-        if (detectedBranch) {
+        if (detectedBranch && patient) {
             await updatePatient(context.senderId, {
                 preferredBranch: detectedBranch.name,
                 preferredBranchRef1cId: detectedBranch.ref1cId

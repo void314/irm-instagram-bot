@@ -55,16 +55,20 @@ export const instagramWebhookController = new Elysia({
             }
         }
     )
-    .post('/', ({ body, instagramWebhookService }) => {
-        instagramWebhookService.processPayload(body)
-        return { status: 'ok' }
-    }, {
-        body: 'instagramWebhookPayload',
-        response: {
-            200: 'webhookEventResponse200'
+    .post(
+        '/',
+        ({ body, instagramWebhookService }) => {
+            instagramWebhookService.processPayload(body)
+            return { status: 'ok' }
         },
-        detail: {
-            summary: 'Webhook event receiver',
-            description: 'Receive Instagram webhook events'
+        {
+            body: 'instagramWebhookPayload',
+            response: {
+                200: 'webhookEventResponse200'
+            },
+            detail: {
+                summary: 'Webhook event receiver',
+                description: 'Receive Instagram webhook events'
+            }
         }
-    })
+    )

@@ -1,8 +1,8 @@
 import { getBranchesList } from '../../constants/branches'
-import { AIGERIM_CORE } from '../../services/rag/persona'
 import { type ChatMessage, chat } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
 import { type PatientInfo, getPatient, updatePatient } from '../../services/rag/patient'
+import { AIGERIM_CORE } from '../../services/rag/persona'
 import { executeTool, getToolDefinitions } from '../../services/tools'
 import type { AgentResult } from '../types'
 
@@ -39,8 +39,10 @@ function buildKnownPatientBlock(patient: PatientInfo | null, lang: 'ru' | 'kk' |
 }
 
 function buildSystemPrompt(patient: PatientInfo | null, lang: 'ru' | 'kk' | 'en'): string {
-    return AIGERIM_CORE + '\n\n' +
-`Пациент согласен записаться на консультацию. Твоя задача — довести запись до конца, следуя строгой
+    return (
+        AIGERIM_CORE +
+        '\n\n' +
+        `Пациент согласен записаться на консультацию. Твоя задача — довести запись до конца, следуя строгой
 последовательности, не пропуская шаги и не спрашивая то, что уже известно.
 
 === ЧТО УЖЕ ИЗВЕСТНО О ПАЦИЕНТЕ ===
@@ -89,6 +91,7 @@ ${COMPLETION_MARKER}
   даже если пациент общается на казахском или английском — переведи сам.
 
 ВАЖНО: Весь ответ пациенту формируй строго на языке: ${LANG_LABEL[lang]}.`
+    )
 }
 
 export async function handleBookingIntent(

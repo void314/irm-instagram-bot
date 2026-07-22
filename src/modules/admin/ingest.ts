@@ -1,8 +1,8 @@
+import Elysia, { t } from 'elysia'
+
+import { eq, sql } from 'drizzle-orm'
 import { existsSync, readdirSync } from 'fs'
 import path from 'path'
-
-import Elysia, { t } from 'elysia'
-import { eq, sql } from 'drizzle-orm'
 
 import { db } from '../../db/client'
 import { chunks, documents } from '../../db/schema'
@@ -31,9 +31,13 @@ function parseMdFile(content: string): ParsedMd {
     }
 
     const sepIndex = lines.findIndex((l) => l.trim() === '---')
-    const body = sepIndex !== -1
-        ? lines.slice(sepIndex + 1).join('\n').trim()
-        : lines.slice(1).join('\n').trim()
+    const body =
+        sepIndex !== -1
+            ? lines
+                  .slice(sepIndex + 1)
+                  .join('\n')
+                  .trim()
+            : lines.slice(1).join('\n').trim()
 
     return { title, meta, body }
 }

@@ -1,7 +1,7 @@
 import { env } from '../config/constants'
-import { log } from './logger'
 import type { MultimodalContent } from './llm/openrouter'
 import { chat } from './llm/openrouter'
+import { log } from './logger'
 
 function detectFormat(url: string, contentType: string | null): string {
     if (contentType) {
@@ -21,10 +21,7 @@ function detectFormat(url: string, contentType: string | null): string {
     return 'mp3'
 }
 
-export async function transcribeAudio(
-    audioUrl: string,
-    pageAccessToken: string
-): Promise<string> {
+export async function transcribeAudio(audioUrl: string, pageAccessToken: string): Promise<string> {
     const audioResponse = await fetch(audioUrl, {
         headers: { Authorization: `Bearer ${pageAccessToken}` }
     })
@@ -37,10 +34,7 @@ export async function transcribeAudio(
     const contentType = audioResponse.headers.get('content-type')
     const format = detectFormat(audioUrl, contentType)
 
-    log.debug(
-        { module: 'transcription', format, sizeBytes: audioBuffer.byteLength },
-        'Audio downloaded'
-    )
+    log.debug({ module: 'transcription', format, sizeBytes: audioBuffer.byteLength }, 'Audio downloaded')
 
     const apiKey = env.OPENROUTER_API_KEY
     if (!apiKey) {
@@ -95,10 +89,7 @@ export async function transcribeAudio(
     return transcript.trim()
 }
 
-export async function describeImage(
-    imageUrl: string,
-    pageAccessToken: string
-): Promise<string> {
+export async function describeImage(imageUrl: string, pageAccessToken: string): Promise<string> {
     const response = await fetch(imageUrl, {
         headers: { Authorization: `Bearer ${pageAccessToken}` }
     })
@@ -110,10 +101,7 @@ export async function describeImage(
     const buffer = await response.arrayBuffer()
     const contentType = response.headers.get('content-type') || 'image/jpeg'
 
-    log.debug(
-        { module: 'vision', contentType, sizeBytes: buffer.byteLength },
-        'Image downloaded'
-    )
+    log.debug({ module: 'vision', contentType, sizeBytes: buffer.byteLength }, 'Image downloaded')
 
     const content: MultimodalContent[] = [
         {
@@ -128,10 +116,11 @@ export async function describeImage(
         }
     ]
 
-    const result = await chat(
-        [{ role: 'user', content }],
-        { model: env.VISION_MODEL, max_tokens: 512, temperature: 0.3 }
-    )
+    const result = await chat([{ role: 'user', content }], {
+        model: env.VISION_MODEL,
+        max_tokens: 512,
+        temperature: 0.3
+    })
 
     return result.content.trim()
 }
