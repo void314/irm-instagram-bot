@@ -16,9 +16,9 @@
 // (см. hasOwnPriceList/resolveFallbackBranchRef1cId, применяется во время
 // запроса цен в services/tools/prices.ts, а не при синке).
 
-export const ALMATY_REF1C_ID = '8f601a57fb23c04011ecb4ba67b1ec9c'
+const ALMATY_REF1C_ID = '8f601a57fb23c04011ecb4ba67b1ec9c'
 
-export interface BranchPriceListMapping {
+interface BranchPriceListMapping {
     branchRef1cId: string
     /** ref1cId прайс-листа для граждан РК. null — у филиала своего нет, нужен fallback. */
     mainPriceListRef1cId: string | null
@@ -26,7 +26,7 @@ export interface BranchPriceListMapping {
     foreignPriceListRef1cId: string | null
 }
 
-export const BRANCH_PRICE_LISTS: BranchPriceListMapping[] = [
+const BRANCH_PRICE_LISTS: BranchPriceListMapping[] = [
     {
         // IRM Костанай
         branchRef1cId: '91201a57fb23c04011ef7b20b28831a2',

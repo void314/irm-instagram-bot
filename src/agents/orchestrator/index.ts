@@ -31,7 +31,7 @@ const BOOKING_DECLINE_RESPONSE: Record<'ru' | 'kk' | 'en', string> = {
     en: 'Alright, if you change your mind — feel free to reach out!'
 }
 
-const MAX_PIPELINE_ITERATIONS = 3
+const MAX_PIPELINE_ITERATIONS = 1
 
 // Агенты, которые отдают СЫРЫЕ ФАКТЫ (без тона/приветствий/CTA) и поэтому ВСЕГДА
 // должны пройти через главного агента (craftResponse), прежде чем попасть к пациенту.

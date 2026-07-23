@@ -1,6 +1,6 @@
 import type { AgentDescriptor, Gap } from './types'
 
-export const AGENTS: AgentDescriptor[] = [
+const AGENTS: AgentDescriptor[] = [
     {
         name: 'tool',
         description: 'Цены на медицинские услуги и расписание врачей',
@@ -57,6 +57,6 @@ export function selectNextAgents(gaps: Gap[], calledAgents: string[]): AgentDesc
     return candidates
 }
 
-export function getAgentNames(): string[] {
+function getAgentNames(): string[] {
     return AGENTS.map((a) => a.name)
 }

@@ -26,7 +26,7 @@ function pickSemanticQuery(originalQuery: string, searchQueries: string[]): stri
     return originalQuery
 }
 
-export function parseHistory(historyStr: string): { role: 'user' | 'assistant'; content: string }[] {
+function parseHistory(historyStr: string): { role: 'user' | 'assistant'; content: string }[] {
     if (!historyStr || historyStr === 'нет') return []
     return historyStr
         .split('\n')

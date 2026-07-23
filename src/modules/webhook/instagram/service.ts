@@ -63,7 +63,7 @@ function splitIntoChunks(text: string, maxLen: number = INSTAGRAM_MAX_LENGTH): s
     return chunks
 }
 
-export class InstagramMessagingService {
+class InstagramMessagingService {
     public async sendTextMessage(recipientId: string, text: string): Promise<SendMessageResult> {
         let pageToken: string | null = null
 
@@ -115,7 +115,7 @@ export class InstagramMessagingService {
     }
 }
 
-export class InstagramCommentService {
+class InstagramCommentService {
     public async replyToComment(commentId: string, text: string): Promise<SendMessageResult> {
         let pageToken: string | null = null
 

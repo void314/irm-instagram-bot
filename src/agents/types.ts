@@ -23,7 +23,7 @@ export interface AgentDescriptor {
     fillsGaps: Gap['type'][]
 }
 
-export type Lang = 'ru' | 'kk' | 'en'
+type Lang = 'ru' | 'kk' | 'en'
 
 export interface PipelineState {
     query: string

@@ -101,5 +101,5 @@ const app = new Elysia({ name: 'app.root' })
     // * Services Cron
     .use(servicesCronController)
 
-export type App = typeof app
+type App = typeof app
 export default app

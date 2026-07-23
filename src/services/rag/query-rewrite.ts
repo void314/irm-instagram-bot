@@ -100,7 +100,7 @@ const PRONOUN_MARKERS = [
     'қайда'
 ]
 
-export function needsRewrite(query: string, history: { role: string; content: string }[]): boolean {
+function needsRewrite(query: string, history: { role: string; content: string }[]): boolean {
     if (history.length === 0) return false
     const words = query.trim().split(/\s+/)
     if (words.length > 10) return false
@@ -110,7 +110,7 @@ export function needsRewrite(query: string, history: { role: string; content: st
     return false
 }
 
-export async function expandQuery(
+async function expandQuery(
     query: string,
     history: { role: 'user' | 'assistant'; content: string }[]
 ): Promise<string> {

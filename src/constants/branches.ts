@@ -8,7 +8,7 @@ export interface Branch {
 // именно это значение используется как branchRef1cId в таблице services, у докторов
 // и в price-lists. Не путать с внутренним id филиала (cuid) — они выглядят похоже,
 // но это разные идентификаторы. Проверено вручную через GET /api/v1/branches.
-export const BRANCHES: Branch[] = [
+const BRANCHES: Branch[] = [
     { name: 'IRM Костанай', city: 'Костанай', ref1cId: '91201a57fb23c04011ef7b20b28831a2' },
     { name: 'IRM Кабанбай', city: 'Алматы', ref1cId: '8f601a57fb23c04011ecc07f2837df60' },
     { name: 'IRM Алматы', city: 'Алматы', ref1cId: '8f601a57fb23c04011ecb4ba67b1ec9c' },
@@ -39,7 +39,7 @@ export function findBranchByNameOrCity(input: string): Branch | null {
 // Список филиалов, которые частично совпадают с запросом, но неоднозначно
 // (более одного кандидата) — используется вызывающим кодом, чтобы задать
 // пациенту точечный уточняющий вопрос вместо показа всего списка филиалов.
-export function findAmbiguousBranches(input: string): Branch[] {
+function findAmbiguousBranches(input: string): Branch[] {
     const q = input.toLowerCase().trim()
     if (!q) return []
 

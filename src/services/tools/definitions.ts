@@ -1,6 +1,6 @@
 import type { ToolDefinition } from '../llm/openrouter'
 
-export const PRICES_TOOL: ToolDefinition = {
+const PRICES_TOOL: ToolDefinition = {
     type: 'function',
     function: {
         name: 'get_prices',
@@ -40,7 +40,7 @@ export const PRICES_TOOL: ToolDefinition = {
     }
 }
 
-export const SCHEDULE_TOOL: ToolDefinition = {
+const SCHEDULE_TOOL: ToolDefinition = {
     type: 'function',
     function: {
         name: 'get_doctor_schedule',

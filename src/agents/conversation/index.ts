@@ -92,7 +92,7 @@ function getDisplayName(patient: PatientInfo | null): string | null {
  * образом (см. getFastIntentResponse), поэтому здесь НЕ используется, чтобы избежать
  * дублирования вида "Артём, Здравствуйте, Артём!".
  */
-export function personalizeAnswer(answer: string, patient: PatientInfo | null): string {
+function personalizeAnswer(answer: string, patient: PatientInfo | null): string {
     const displayName = getDisplayName(patient)
     if (!displayName) return answer
 
@@ -102,11 +102,7 @@ export function personalizeAnswer(answer: string, patient: PatientInfo | null): 
     return `${displayName}, ${answer}`
 }
 
-export async function appendNameQuestion(
-    answer: string,
-    patient: PatientInfo | null,
-    senderId: string
-): Promise<string> {
+async function appendNameQuestion(answer: string, patient: PatientInfo | null, senderId: string): Promise<string> {
     if (!patient) return answer
     if (patient.name || patient.nameChangeOffered) return answer
 

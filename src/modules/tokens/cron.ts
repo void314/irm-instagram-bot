@@ -1,5 +1,6 @@
 import Elysia from 'elysia'
 
+import { log } from '../../services/logger'
 import { TokenService } from './service'
 
 const tokenService = new TokenService()
@@ -12,17 +13,17 @@ export const tokenCronController = new Elysia({
         try {
             const result = await tokenService.refreshAllActive()
             if (result.refreshed > 0 || result.failed > 0) {
-                console.log(
+                log.info(
                     `[TokenCron] refreshed=${result.refreshed} failed=${result.failed}`,
                     result.errors.length > 0 ? `errors=${result.errors.join(', ')}` : ''
                 )
             }
         } catch (err) {
-            console.error('[TokenCron] error:', err)
+            log.error('[TokenCron] error:', err)
         }
     }
 
     await run()
     setInterval(run, CRON_INTERVAL)
-    console.log(`[TokenCron] started — every ${CRON_INTERVAL / 60000}min`)
+    log.info(`[TokenCron] started — every ${CRON_INTERVAL / 60000}min`)
 })
