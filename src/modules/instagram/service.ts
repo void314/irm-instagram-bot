@@ -29,9 +29,7 @@ export class InstagramService {
             } as InstagramProfileResponse400)
         }
 
-        const url = new URL(
-            `https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION}/${env.INSTAGRAM_BUSINESS_ID}`
-        )
+        const url = new URL(`https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION}/${env.INSTAGRAM_BUSINESS_ID}`)
         url.searchParams.set('fields', 'id,username')
         url.searchParams.set('access_token', pageToken)
 

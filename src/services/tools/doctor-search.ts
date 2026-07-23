@@ -183,9 +183,7 @@ export async function findDoctors(query: string, limit = 5, branchRef1cId?: stri
     try {
         const allDoctors = await fetchAllDoctors()
 
-        const filteredDoctors = branchRef1cId
-            ? allDoctors.filter((d) => d.department?.branch?.ref1cId === branchRef1cId)
-            : allDoctors
+        const filteredDoctors = branchRef1cId ? allDoctors.filter((d) => d.department?.branch?.ref1cId === branchRef1cId) : allDoctors
 
         const scored = filteredDoctors
             .map((d) => ({ doctor: d, score: matchScore(d, words) }))

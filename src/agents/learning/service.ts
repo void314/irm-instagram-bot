@@ -55,8 +55,7 @@ export async function processCorrection(feedbackId: bigint) {
     const topicResponse = await chat([
         {
             role: 'system',
-            content:
-                'Выдели основную тему этого факта в 2-3 словах. Например: "Цены лазерная эпиляция", "График работы Алматы". Только тема, без кавычек.'
+            content: 'Выдели основную тему этого факта в 2-3 словах. Например: "Цены лазерная эпиляция", "График работы Алматы". Только тема, без кавычек.'
         },
         { role: 'user', content: coreFact }
     ])
@@ -100,9 +99,7 @@ export async function generateKbSuggestions() {
 
     for (const [topic, items] of Object.entries(groups)) {
         // If we have enough items in a group, or we just generate for any pending item (for testing let's do any)
-        const combinedContent = items
-            .map((i, idx) => `[${idx + 1}] Вопрос: ${i.query}\nИсправление: ${i.correctedResponse}`)
-            .join('\n\n')
+        const combinedContent = items.map((i, idx) => `[${idx + 1}] Вопрос: ${i.query}\nИсправление: ${i.correctedResponse}`).join('\n\n')
 
         const docResponse = await chat([
             { role: 'system', content: GENERATE_KB_DOC_PROMPT },
@@ -121,10 +118,7 @@ export async function generateKbSuggestions() {
             })
             .returning({ id: kbSuggestions.id })
 
-        log.info(
-            { module: 'learning', topic, suggestionId: Number(suggestionIds[0].id) },
-            'Generated KB suggestion'
-        )
+        log.info({ module: 'learning', topic, suggestionId: Number(suggestionIds[0].id) }, 'Generated KB suggestion')
         generatedCount++
     }
 
@@ -166,10 +160,7 @@ export async function applySuggestion(suggestionId: bigint) {
     }
 
     // 3. Mark suggestion as applied
-    await db
-        .update(kbSuggestions)
-        .set({ status: 'applied', targetDocumentId: doc.id })
-        .where(eq(kbSuggestions.id, suggestionId))
+    await db.update(kbSuggestions).set({ status: 'applied', targetDocumentId: doc.id }).where(eq(kbSuggestions.id, suggestionId))
 
     // 4. Mark source feedbacks as applied
     if (suggestion.sourceFeedbackIds && suggestion.sourceFeedbackIds.length > 0) {
@@ -184,8 +175,5 @@ export async function applySuggestion(suggestionId: bigint) {
             )
     }
 
-    log.info(
-        { module: 'learning', suggestionId: Number(suggestionId), documentId: Number(doc.id) },
-        'Applied KB suggestion'
-    )
+    log.info({ module: 'learning', suggestionId: Number(suggestionId), documentId: Number(doc.id) }, 'Applied KB suggestion')
 }

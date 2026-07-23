@@ -1,12 +1,7 @@
 import { status } from 'elysia'
 
 import { env } from '../../../config/constants'
-import type {
-    OauthCallbackErrorResponse400,
-    OauthCallbackResponse200,
-    TokenFromUserErrorResponse400,
-    TokenFromUserResponse200
-} from './model'
+import type { OauthCallbackErrorResponse400, OauthCallbackResponse200, TokenFromUserErrorResponse400, TokenFromUserResponse200 } from './model'
 
 const FB_AUTH_URL = 'https://www.facebook.com/v25.0/dialog/oauth'
 const FB_TOKEN_URL = 'https://graph.facebook.com/v25.0/oauth/access_token'
@@ -65,14 +60,8 @@ export class FacebookAuthService {
         return fbUrl.toString()
     }
 
-    private async fetchIgBusinessAccount(
-        pageId: string,
-        pageAccessToken: string
-    ): Promise<{ igId: string; username?: string } | null> {
-        const res = await this.graphApiGet(
-            `/${pageId}?fields=instagram_business_account{id,username}`,
-            pageAccessToken
-        )
+    private async fetchIgBusinessAccount(pageId: string, pageAccessToken: string): Promise<{ igId: string; username?: string } | null> {
+        const res = await this.graphApiGet(`/${pageId}?fields=instagram_business_account{id,username}`, pageAccessToken)
 
         if (!res.ok) return null
 
@@ -88,9 +77,7 @@ export class FacebookAuthService {
         }
     }
 
-    public async exchangeUserToken(
-        userToken: string
-    ): Promise<TokenFromUserResponse200 | TokenFromUserErrorResponse400> {
+    public async exchangeUserToken(userToken: string): Promise<TokenFromUserResponse200 | TokenFromUserErrorResponse400> {
         const meRes = await this.graphApiGet('/me', userToken)
         if (!meRes.ok) {
             return { error: 'Invalid user token', details: meRes.data }
@@ -107,16 +94,11 @@ export class FacebookAuthService {
         }
 
         const pages = pagesData?.data || []
-        const grantedPerms = perms
-            .filter((permission) => permission.status === 'granted')
-            .map((permission) => permission.permission)
+        const grantedPerms = perms.filter((permission) => permission.status === 'granted').map((permission) => permission.permission)
         const hasPagesMessaging = grantedPerms.includes('pages_messaging')
 
         if (pages.length === 0 && env.FACEBOOK_PAGE_ID) {
-            const directRes = await this.graphApiGet(
-                `/${env.FACEBOOK_PAGE_ID}?fields=access_token,name`,
-                userToken
-            )
+            const directRes = await this.graphApiGet(`/${env.FACEBOOK_PAGE_ID}?fields=access_token,name`, userToken)
 
             if (directRes.ok && (directRes.data as { access_token?: string })?.access_token) {
                 const page = directRes.data as FacebookPage
@@ -133,8 +115,7 @@ export class FacebookAuthService {
                 }
 
                 if (!hasPagesMessaging) {
-                    result.warning =
-                        'Missing pages_messaging — subscription will fail. Regenerate token with this permission'
+                    result.warning = 'Missing pages_messaging — subscription will fail. Regenerate token with this permission'
                 }
 
                 return result
@@ -150,9 +131,7 @@ export class FacebookAuthService {
             }
         }
 
-        const matchedPage = env.FACEBOOK_PAGE_ID
-            ? pages.find((page) => page.id === env.FACEBOOK_PAGE_ID)
-            : pages[0]
+        const matchedPage = env.FACEBOOK_PAGE_ID ? pages.find((page) => page.id === env.FACEBOOK_PAGE_ID) : pages[0]
 
         if (!matchedPage) {
             return {
@@ -175,8 +154,7 @@ export class FacebookAuthService {
         }
 
         if (!hasPagesMessaging) {
-            result.warning =
-                'Missing pages_messaging — subscription will fail. Regenerate token with this permission'
+            result.warning = 'Missing pages_messaging — subscription will fail. Regenerate token with this permission'
         }
 
         return result

@@ -37,16 +37,11 @@ export function selectNextAgents(gaps: Gap[], calledAgents: string[]): AgentDesc
 
     for (const targetGap of targetGaps) {
         let candidate = AGENTS.find(
-            (a) =>
-                a.fillsGaps.includes(targetGap.type) &&
-                !calledAgents.includes(a.name) &&
-                !candidates.some((c) => c.name === a.name)
+            (a) => a.fillsGaps.includes(targetGap.type) && !calledAgents.includes(a.name) && !candidates.some((c) => c.name === a.name)
         )
 
         if (!candidate) {
-            candidate = AGENTS.find(
-                (a) => a.fillsGaps.includes(targetGap.type) && !candidates.some((c) => c.name === a.name)
-            )
+            candidate = AGENTS.find((a) => a.fillsGaps.includes(targetGap.type) && !candidates.some((c) => c.name === a.name))
         }
 
         if (candidate) {

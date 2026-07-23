@@ -38,9 +38,7 @@ function fromBase64(str: string): Uint8Array {
 
 export async function encryptToken(plaintext: string): Promise<{ ciphertext: string; iv: string }> {
     const rawKey = getRawKey()
-    const cryptoKey = await crypto.subtle.importKey('raw', rawKey as unknown as ArrayBuffer, ALGORITHM, false, [
-        'encrypt'
-    ])
+    const cryptoKey = await crypto.subtle.importKey('raw', rawKey as unknown as ArrayBuffer, ALGORITHM, false, ['encrypt'])
 
     const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH))
     const encoded = new TextEncoder().encode(plaintext)
@@ -55,9 +53,7 @@ export async function encryptToken(plaintext: string): Promise<{ ciphertext: str
 
 export async function decryptToken(ciphertext: string, iv: string): Promise<string> {
     const rawKey = getRawKey()
-    const cryptoKey = await crypto.subtle.importKey('raw', rawKey as unknown as ArrayBuffer, ALGORITHM, false, [
-        'decrypt'
-    ])
+    const cryptoKey = await crypto.subtle.importKey('raw', rawKey as unknown as ArrayBuffer, ALGORITHM, false, ['decrypt'])
 
     const decrypted = await crypto.subtle.decrypt(
         { name: ALGORITHM, iv: fromBase64(iv) as unknown as ArrayBuffer },

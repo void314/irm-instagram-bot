@@ -3,6 +3,7 @@ import Elysia, { status, t } from 'elysia'
 import { count, desc, eq, like, sql } from 'drizzle-orm'
 
 import { runPipeline } from '../../agents/orchestrator'
+import { env } from '../../config/constants'
 import { db } from '../../db/client'
 import { conversations, messages, patients, services } from '../../db/schema'
 import { findDoctor } from '../../services/tools/doctor-search'
@@ -318,11 +319,44 @@ adminController
         '/tools/ask',
         async ({ body }) => {
             try {
-                const ctx = body.senderId
-                    ? { conversationId: BigInt(body.conversationId ?? 0), senderId: body.senderId }
-                    : undefined
+                if (!body.senderId) {
+                    const result = await runPipeline(body.question, undefined, true)
+                    return result
+                }
+
+                // Find or create conversation by senderId
+                const [existing] = await db.select().from(conversations).where(eq(conversations.senderId, body.senderId)).limit(1)
+
+                let convId: bigint
+                if (existing) {
+                    convId = existing.id
+                } else {
+                    const [newConv] = await db
+                        .insert(conversations)
+                        .values({ senderId: body.senderId, businessId: env.INSTAGRAM_BUSINESS_ID ?? 'simulator' })
+                        .returning()
+                    convId = newConv.id
+                }
+
+                // Save user message before pipeline (so it appears in history)
+                await db.insert(messages).values({
+                    conversationId: convId,
+                    fromId: body.senderId,
+                    text: body.question
+                })
+
+                // Run pipeline with the real conversationId
+                const ctx = { conversationId: convId, senderId: body.senderId }
                 const result = await runPipeline(body.question, ctx, true)
-                return result
+
+                // Save AI response after pipeline
+                await db.insert(messages).values({
+                    conversationId: convId,
+                    fromId: env.INSTAGRAM_BUSINESS_ID ?? 'simulator',
+                    text: result.answer
+                })
+
+                return { ...result, conversationId: String(convId) }
             } catch (err) {
                 return { error: String(err) }
             }
@@ -335,7 +369,7 @@ adminController
             }),
             detail: {
                 summary: 'Ask with tools',
-                description: 'Run full pipeline with tool integration (verbose mode)'
+                description: 'Run full pipeline with tool integration (verbose mode) — auto-creates conversation by senderId and persists messages.'
             }
         }
     )
@@ -402,8 +436,25 @@ adminController
             }),
             detail: {
                 summary: 'Clear conversation memory',
-                description:
-                    'Deletes conversation messages, resets summary/messageCount, and optionally clears patient data.'
+                description: 'Deletes conversation messages, resets summary/messageCount, and optionally clears patient data.'
+            }
+        }
+    )
+
+    .post(
+        '/tools/ensure-conversation',
+        async ({ body }) => {
+            const [conv] = await db
+                .insert(conversations)
+                .values({ senderId: body.senderId, businessId: env.INSTAGRAM_BUSINESS_ID ?? 'simulator' })
+                .returning()
+            return { conversationId: String(conv.id), senderId: conv.senderId }
+        },
+        {
+            body: t.Object({ senderId: t.String() }),
+            detail: {
+                summary: 'Create conversation for simulator',
+                description: 'Creates a new conversation and returns its ID for the chat simulator.'
             }
         }
     )

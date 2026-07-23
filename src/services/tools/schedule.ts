@@ -1,9 +1,5 @@
 import { env } from '../../config/constants'
-import {
-    buildBranchClarificationPrompt,
-    findBranchByNameOrCity,
-    findBranchByRef1cId
-} from '../../constants/branches'
+import { buildBranchClarificationPrompt, findBranchByNameOrCity, findBranchByRef1cId } from '../../constants/branches'
 import { log } from '../logger'
 import { type MDoctor, findDoctors } from './doctor-search'
 import type { Tool, ToolResult } from './types'
@@ -100,16 +96,13 @@ function formatScheduleDays(schedule: ScheduleDay[], busyCounts: Map<string, num
             continue
         }
 
-        const periods = day.workPeriods
-            .filter((p) => p.timeType !== 'busy')
-            .map((p) => `${p.startTime.slice(0, 5)}–${p.endTime.slice(0, 5)}`)
+        const periods = day.workPeriods.filter((p) => p.timeType !== 'busy').map((p) => `${p.startTime.slice(0, 5)}–${p.endTime.slice(0, 5)}`)
 
         if (periods.length === 0) {
             lines.push(`${label} — нет свободного времени`)
         } else {
             const busy = busyCounts.get(day.date)
-            const busyNote =
-                busy && busy > 0 ? ` (есть занятые окна — ${busy} шт., уточни у пациента точное время)` : ''
+            const busyNote = busy && busy > 0 ? ` (есть занятые окна — ${busy} шт., уточни у пациента точное время)` : ''
             lines.push(`${label}: ${periods.join(', ')}${busyNote}`)
         }
     }
@@ -117,26 +110,16 @@ function formatScheduleDays(schedule: ScheduleDay[], busyCounts: Map<string, num
     return lines.join('\n')
 }
 
-function formatSchedule(
-    doctor: MDoctor,
-    schedule: ScheduleDay[],
-    branchName: string,
-    monday: Date,
-    sunday: Date
-): string {
+function formatSchedule(doctor: MDoctor, schedule: ScheduleDay[], branchName: string, monday: Date, sunday: Date): string {
     const weekSchedule = trimToWeek(schedule, monday, sunday)
     const busyCounts = countBusySlotsByDate(schedule)
     const header = `Расписание врача ${doctor.fullName} на текущую неделю (${formatDate(monday)} – ${formatDate(sunday)}) в филиале ${branchName}:`
-    const consultPrice = doctor.consultPrice
-        ? `\n\nСтоимость консультации: ${Number(doctor.consultPrice).toLocaleString('ru-RU')} ₸`
-        : ''
+    const consultPrice = doctor.consultPrice ? `\n\nСтоимость консультации: ${Number(doctor.consultPrice).toLocaleString('ru-RU')} ₸` : ''
     return `${header}\n\n${formatScheduleDays(weekSchedule, busyCounts)}${consultPrice}`
 }
 
 function hasFreeSlots(schedule: ScheduleDay[], monday: Date, sunday: Date): boolean {
-    return trimToWeek(schedule, monday, sunday).some(
-        (day) => day.isWorkDay && day.workPeriods.some((p) => p.timeType !== 'busy')
-    )
+    return trimToWeek(schedule, monday, sunday).some((day) => day.isWorkDay && day.workPeriods.some((p) => p.timeType !== 'busy'))
 }
 
 async function fetchScheduleRaw(doctor: MDoctor): Promise<ScheduleDay[] | null> {
@@ -260,9 +243,7 @@ export const scheduleTool: Tool = {
         return {
             success: true,
             found: false,
-            answer:
-                'К сожалению, у всех найденных врачей нет свободного времени на этой неделе:\n' +
-                skipNotes.join('\n')
+            answer: 'К сожалению, у всех найденных врачей нет свободного времени на этой неделе:\n' + skipNotes.join('\n')
         }
     }
 }

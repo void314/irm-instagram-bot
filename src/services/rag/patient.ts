@@ -78,10 +78,7 @@ export async function ensurePatient(senderId: string): Promise<PatientInfo> {
     }
 }
 
-export async function updatePatient(
-    senderId: string,
-    data: Partial<Omit<PatientInfo, 'senderId'>>
-): Promise<void> {
+export async function updatePatient(senderId: string, data: Partial<Omit<PatientInfo, 'senderId'>>): Promise<void> {
     const fields = Object.keys(data).filter((k) => data[k as keyof typeof data] !== undefined)
     if (fields.length > 0) {
         log.info(
@@ -101,34 +98,22 @@ export async function updatePatient(
         .execute()
 }
 
-export async function fetchInstagramUserInfo(
-    senderId: string,
-    pageAccessToken: string
-): Promise<{ name: string; username: string } | null> {
+export async function fetchInstagramUserInfo(senderId: string, pageAccessToken: string): Promise<{ name: string; username: string } | null> {
     try {
         const url = `${FACEBOOK_GRAPH_API}/v25.0/${senderId}?fields=name,username&access_token=${pageAccessToken}`
         const res = await fetch(url)
         if (!res.ok) {
-            log.warn(
-                { module: 'patient', senderId, status: res.status, statusText: res.statusText },
-                'instagram user info fetch failed'
-            )
+            log.warn({ module: 'patient', senderId, status: res.status, statusText: res.statusText }, 'instagram user info fetch failed')
             return null
         }
 
         const data = (await res.json()) as { name?: string; username?: string }
         if (!data.name && !data.username) {
-            log.warn(
-                { module: 'patient', senderId, response: JSON.stringify(data) },
-                'instagram user info: empty response'
-            )
+            log.warn({ module: 'patient', senderId, response: JSON.stringify(data) }, 'instagram user info: empty response')
             return null
         }
 
-        log.info(
-            { module: 'patient', senderId, name: data.name, username: data.username },
-            'instagram user info fetched'
-        )
+        log.info({ module: 'patient', senderId, name: data.name, username: data.username }, 'instagram user info fetched')
         return { name: data.name || '', username: data.username || '' }
     } catch (err) {
         log.warn({ module: 'patient', senderId, error: String(err) }, 'instagram user info fetch error')
@@ -137,59 +122,88 @@ export async function fetchInstagramUserInfo(
 }
 
 const EXTRACTION_PROMPT = [
-    'Извлеки информацию о пациенте из диалога ниже.',
-    'Верни ТОЛЬКО JSON без пояснений, строго в формате:',
-    '{',
-    '  "name": string | null,',
-    '  "citizenship": "kz" | "foreign" | null,',
-    '  "phone": string | null,',
-    '  "preferredBranch": string | null,',
-    '  "hasBookedConsultation": boolean,',
-    '  "nameChangeOffered": boolean',
-    '}',
+    'You are an ultra-fast, precise structured data extractor for IRM clinic chatbot.',
+    'Extract patient profile updates from the USER message only.',
+    'You will receive JSON input with two fields: user_message and assistant_message.',
+    'assistant_message is provided for context but you MUST NOT extract facts from it.',
     '',
-    'Правила:',
-    'Извлекай ТОЛЬКО из сообщений пользователя (строки "Пользователь:").',
-    'Игнорируй сообщения ассистента (строки "Ассистент:").',
-    '- name: имя, которое назвал пользователь (не instagram_name)',
-    '- citizenship: "kz" если гражданин РК/Казахстана, "foreign" если иностранец',
-    '- phone: номер телефона, если пользователь его оставил',
-    '- preferredBranch: название филиала, который выбрал пользователь (из сообщений пользователя)',
-    '- hasBookedConsultation: true если записался на приём',
-    '- nameChangeOffered: true если ты уже предлагала сменить имя (nickname → реальное)',
+    'Return ONLY valid JSON with EXACTLY these keys and types:',
+    '{"name": string|null, "citizenship":"kz"|"foreign"|null, "phone": string|null, "preferredBranch": string|null, "hasBookedConsultation": boolean, "nameChangeOffered": boolean}',
     '',
-    'Если информации нет — возвращай null для поля.'
+    'Rules:',
+    '- Do not invent data. If unknown, return null (or false for booleans).',
+    '- name: only if user explicitly provided their real name (not instagram username).',
+    '- citizenship: "kz" if citizen of Kazakhstan / "foreign" if explicitly foreign.',
+    '- phone: only if user provided a phone number.',
+    '- preferredBranch: branch/city choice mentioned by the user.',
+    '- hasBookedConsultation: true only if the user clearly confirmed booking.',
+    '- nameChangeOffered: true only if assistant already offered to confirm/adjust name.'
 ].join('\n')
 
 function extractJsonObject(raw: string): string {
     const trimmed = raw.trim()
     const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
     if (fenced) return fenced[1].trim()
+
+    const firstBrace = trimmed.indexOf('{')
+    const lastBrace = trimmed.lastIndexOf('}')
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        return trimmed.slice(firstBrace, lastBrace + 1)
+    }
+
     return trimmed
 }
 
 export async function extractPatientInfoFromDialogue(
-    dialogue: string,
+    input: { userMessage: string; assistantMessage: string },
     currentPatient: PatientInfo
 ): Promise<Partial<Omit<PatientInfo, 'senderId'>>> {
     let rawContent = ''
     try {
-        const answer = await chat(
-            [
-                { role: 'system', content: EXTRACTION_PROMPT },
-                { role: 'user', content: dialogue }
-            ],
-            { model: env.INTENT_MODEL, response_format: { type: 'json_object' } }
-        )
+        const payload = JSON.stringify({
+            user_message: input.userMessage,
+            assistant_message: input.assistantMessage
+        })
+
+        let answer: { content: string }
+        try {
+            answer = await chat(
+                [
+                    { role: 'system', content: EXTRACTION_PROMPT },
+                    { role: 'user', content: payload }
+                ],
+                {
+                    model: env.INTENT_MODEL,
+                    temperature: 0,
+                    max_tokens: 200,
+                    response_format: { type: 'json_object' }
+                }
+            )
+        } catch {
+            answer = await chat(
+                [
+                    { role: 'system', content: EXTRACTION_PROMPT },
+                    { role: 'user', content: payload }
+                ],
+                { model: env.INTENT_MODEL, temperature: 0, max_tokens: 200 }
+            )
+        }
 
         rawContent = answer.content
         const extracted = JSON.parse(extractJsonObject(rawContent)) as Partial<Omit<PatientInfo, 'senderId'>>
         const merged: Partial<Omit<PatientInfo, 'senderId'>> = {}
 
-        for (const key of ['name', 'citizenship', 'phone', 'preferredBranch'] as const) {
-            if (extracted[key] !== null && extracted[key] !== undefined) {
-                merged[key] = extracted[key]
-            }
+        if (typeof extracted.name === 'string' && extracted.name.trim()) {
+            merged.name = extracted.name.trim()
+        }
+        if (extracted.citizenship === 'kz' || extracted.citizenship === 'foreign') {
+            merged.citizenship = extracted.citizenship
+        }
+        if (typeof extracted.phone === 'string' && extracted.phone.trim()) {
+            merged.phone = extracted.phone.trim()
+        }
+        if (typeof extracted.preferredBranch === 'string' && extracted.preferredBranch.trim()) {
+            merged.preferredBranch = extracted.preferredBranch.trim()
         }
 
         // Если модель извлекла имя из диалога — это подтверждённое имя от пользователя,
@@ -214,16 +228,13 @@ export async function extractPatientInfoFromDialogue(
             merged.nameChangeOffered = true
         }
 
-        const filledKeys = Object.keys(merged).filter(
-            (k) => merged[k as keyof typeof merged] !== undefined && merged[k as keyof typeof merged] !== null
-        )
+        const filledKeys = Object.keys(merged).filter((k) => merged[k as keyof typeof merged] !== undefined && merged[k as keyof typeof merged] !== null)
         if (filledKeys.length > 0) {
             log.info(
                 {
                     module: 'patient',
                     senderId: currentPatient.senderId,
-                    extracted: filledKeys,
-                    values: filledKeys.map((k) => `${k}=${JSON.stringify(merged[k as keyof typeof merged])}`)
+                    extracted: filledKeys
                 },
                 'patient: extracted from dialogue'
             )
@@ -235,8 +246,7 @@ export async function extractPatientInfoFromDialogue(
             {
                 module: 'patient',
                 senderId: currentPatient.senderId,
-                error: String(err),
-                rawContent: rawContent.slice(0, 500)
+                error: String(err)
             },
             'patient info extraction failed'
         )

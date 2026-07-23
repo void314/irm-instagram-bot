@@ -22,19 +22,14 @@ export const instagramWebhookController = new Elysia({
             },
             detail: {
                 summary: 'Subscribe page to webhook',
-                description:
-                    'Subscribes the Facebook Page to messages and the Instagram Business Account to comments,mentions'
+                description: 'Subscribes the Facebook Page to messages and the Instagram Business Account to comments,mentions'
             }
         }
     )
     .get(
         '/',
         ({ query, set, instagramWebhookService }) => {
-            const result = instagramWebhookService.verifyWebhook(
-                query['hub.mode'],
-                query['hub.verify_token'],
-                query['hub.challenge']
-            )
+            const result = instagramWebhookService.verifyWebhook(query['hub.mode'], query['hub.verify_token'], query['hub.challenge'])
 
             if (result.ok) {
                 set.headers['Content-Type'] = 'text/plain'

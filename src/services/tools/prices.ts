@@ -23,10 +23,8 @@ function normalizeCitizenship(value: unknown): 'kz' | 'foreign' | null {
     const v = String(value ?? '')
         .trim()
         .toLowerCase()
-    if (['kz', 'рк', 'кз', 'қз', 'казахстан', 'қазақстан', 'kazakhstan', 'резидент', 'resident'].includes(v))
-        return 'kz'
-    if (['foreign', 'иностранец', 'иностранный', 'шетел', 'нерезидент', 'non-resident', 'nonresident'].includes(v))
-        return 'foreign'
+    if (['kz', 'рк', 'кз', 'қз', 'казахстан', 'қазақстан', 'kazakhstan', 'резидент', 'resident'].includes(v)) return 'kz'
+    if (['foreign', 'иностранец', 'иностранный', 'шетел', 'нерезидент', 'non-resident', 'nonresident'].includes(v)) return 'foreign'
     return null
 }
 
@@ -183,13 +181,7 @@ export const pricesTool: Tool = {
                 durationMinutes: services.durationMinutes
             })
             .from(services)
-            .where(
-                and(
-                    eq(services.branchRef1cId, queryBranchRef),
-                    eq(services.citizenship, citizenship),
-                    or(...conditions)
-                )
-            )
+            .where(and(eq(services.branchRef1cId, queryBranchRef), eq(services.citizenship, citizenship), or(...conditions)))
             .limit(MAX_RESULTS * 5)
 
         const rows = dedupeByNameAndPrice(rawRows).slice(0, MAX_RESULTS)

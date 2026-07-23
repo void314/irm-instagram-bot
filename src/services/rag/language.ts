@@ -6,11 +6,11 @@ export function detectLanguage(text: string): 'ru' | 'kk' | 'en' | null {
     const trimmed = text.trim()
     if (!trimmed || trimmed.length < MIN_LENGTH_FOR_DETECTION) return null
 
-    const detected = franc(trimmed, { minLength: 3 })
+    const detected = franc(trimmed, { minLength: 3, only: ['rus', 'kaz', 'eng'] })
 
     if (detected === 'kaz') return 'kk'
     if (detected === 'rus') return 'ru'
-    if (detected === 'eng' || detected === 'und') return 'en'
+    if (detected === 'eng') return 'en'
 
     return null
 }

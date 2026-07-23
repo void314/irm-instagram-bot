@@ -111,9 +111,7 @@ function needsRewrite(query: string, history: ChatMessage[]): boolean {
 }
 
 async function expandQuery(query: string, history: ChatMessage[]): Promise<string> {
-    const historyBlock = history
-        .map((m) => `${m.role === 'user' ? 'Пользователь' : 'Ассистент'}: ${m.content}`)
-        .join('\n')
+    const historyBlock = history.map((m) => `${m.role === 'user' ? 'Пользователь' : 'Ассистент'}: ${m.content}`).join('\n')
 
     const prompt = `Given the conversation history and the latest user query, rewrite the query as a standalone search query for a medical clinic knowledge base. Include all relevant context from the conversation. Output ONLY the search query text, nothing else.
 
@@ -162,10 +160,7 @@ export async function resolveSearchQueries(query: string, history: ChatMessage[]
     const lower = query.toLowerCase()
     const extras: string[] = []
 
-    const wantsServices =
-        /(?:услуг(?:а|и)?|процедур(?:а|ы)?|направлени(?:е|я)|что\s+делаете|что\s+лечите|какие\s+услуги)/iu.test(
-            lower
-        )
+    const wantsServices = /(?:услуг(?:а|и)?|процедур(?:а|ы)?|направлени(?:е|я)|что\s+делаете|что\s+лечите|какие\s+услуги)/iu.test(lower)
     if (wantsServices) {
         extras.push('прайс услуги')
         extras.push('список услуг клиники')

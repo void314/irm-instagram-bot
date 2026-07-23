@@ -74,11 +74,7 @@ export async function processRagQuery(
     const semanticQuery = pickSemanticQuery(query, searchQueries)
     const emb = await generateEmbedding(semanticQuery)
 
-    const allResults = await Promise.all(
-        searchQueries.map((q) =>
-            hybridSearch(q, q.toLowerCase() === semanticQuery.toLowerCase() ? emb : undefined)
-        )
-    )
+    const allResults = await Promise.all(searchQueries.map((q) => hybridSearch(q, q.toLowerCase() === semanticQuery.toLowerCase() ? emb : undefined)))
     const initialResults = allResults
         .flat()
         .sort((a, b) => b.score - a.score)
@@ -140,11 +136,7 @@ export async function processRagQuery(
 
             for (const tc of first.toolCalls) {
                 try {
-                    const toolResult = await executeTool(
-                        tc.function.name,
-                        JSON.parse(tc.function.arguments),
-                        patient
-                    )
+                    const toolResult = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
                     toolMessages.push({ role: 'tool', content: toolResult.answer, tool_call_id: tc.id })
                 } catch (err) {
                     toolMessages.push({ role: 'tool', content: `Ошибка: ${String(err)}`, tool_call_id: tc.id })
@@ -162,8 +154,7 @@ export async function processRagQuery(
         const pendingOverrides = isLearningEnabled ? await findPendingOverrides(query) : []
         let overrideStr = ''
         if (pendingOverrides.length > 0) {
-            overrideStr =
-                `\n\nВАЖНОЕ ИСПРАВЛЕНИЕ АДМИНИСТРАТОРА (УЧЕСТЬ ПРИ ОТВЕТЕ):\n` + pendingOverrides.join('\n')
+            overrideStr = `\n\nВАЖНОЕ ИСПРАВЛЕНИЕ АДМИНИСТРАТОРА (УЧЕСТЬ ПРИ ОТВЕТЕ):\n` + pendingOverrides.join('\n')
         }
 
         const systemMsg =
@@ -179,9 +170,7 @@ export async function processRagQuery(
     debug.topScore = Math.max(...allScores)
     debug.topChunkSnippet = searchResults[0].text.slice(0, 120).replace(/\n/g, ' ')
 
-    const contextStr = searchResults
-        .map((r) => `[релевантность: ${(r.score * 100).toFixed(0)}%]\n${r.text}`)
-        .join('\n\n---\n\n')
+    const contextStr = searchResults.map((r) => `[релевантность: ${(r.score * 100).toFixed(0)}%]\n${r.text}`).join('\n\n---\n\n')
 
     const pendingOverrides = isLearningEnabled ? await findPendingOverrides(query) : []
     let overrideStr = ''
@@ -193,14 +182,11 @@ export async function processRagQuery(
         injectPrompt(DATA_PROMPT_WITH_CONTEXT, {
             ...baseReplacements,
             context: contextStr + overrideStr
-        }) +
-        `\n\nФакты излагай на языке: ${debug.language === 'kk' ? 'казахском' : debug.language === 'en' ? 'английском' : 'русском'}.`
+        }) + `\n\nФакты излагай на языке: ${debug.language === 'kk' ? 'казахском' : debug.language === 'en' ? 'английском' : 'русском'}.`
 
     const { content: answer, usedTools } = await callLlmWithTools(systemPrompt)
 
-    const grounding: GroundingResult = usedTools
-        ? { passed: true, needsClarification: false }
-        : await checkGrounding(answer, searchResults)
+    const grounding: GroundingResult = usedTools ? { passed: true, needsClarification: false } : await checkGrounding(answer, searchResults)
 
     debug.groundingPassed = grounding.passed
 

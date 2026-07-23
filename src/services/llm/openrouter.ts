@@ -48,19 +48,14 @@ function getHeaders(): Record<string, string> {
     }
 }
 
-export type MultimodalContent =
-    | { type: 'text'; text: string }
-    | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'auto' } }
+export type MultimodalContent = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'auto' } }
 
 export type ChatMessage =
     | { role: 'system' | 'user'; content: string | MultimodalContent[] }
     | { role: 'assistant'; content: string | null; tool_calls?: ToolCall[] }
     | { role: 'tool'; content: string; tool_call_id: string }
 
-export async function chat(
-    messages: ChatMessage[],
-    opts?: ChatOptions
-): Promise<{ content: string; toolCalls?: ToolCall[] }> {
+export async function chat(messages: ChatMessage[], opts?: ChatOptions): Promise<{ content: string; toolCalls?: ToolCall[] }> {
     const model = opts?.model || env.LLM_MODEL
     const body: Record<string, unknown> = {
         model,
@@ -99,10 +94,7 @@ export async function chat(
 
     if (!res.ok) {
         const text = await res.text()
-        log.error(
-            { module: 'llm:chat', model, status: res.status, duration: `${duration}ms` },
-            `LLM error: ${text.slice(0, 200)}`
-        )
+        log.error({ module: 'llm:chat', model, status: res.status, duration: `${duration}ms` }, `LLM error: ${text.slice(0, 200)}`)
         throw new Error(`OpenRouter chat error ${res.status}: ${text}`)
     }
 
@@ -163,10 +155,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
         throw new Error(`No embedding in response: ${JSON.stringify(rawData[0]).slice(0, 500)}`)
     }
 
-    log.debug(
-        { module: 'llm:embed', model: env.EMBED_MODEL, duration: `${duration}ms`, dimensions: embedding.length },
-        'Embedding response'
-    )
+    log.debug({ module: 'llm:embed', model: env.EMBED_MODEL, duration: `${duration}ms`, dimensions: embedding.length }, 'Embedding response')
 
     return embedding
 }

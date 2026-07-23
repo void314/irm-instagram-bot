@@ -42,15 +42,11 @@ export async function checkAndHandleObjection(
             scripts: scriptText,
             patientContext: patientStr || '',
             today: formatToday()
-        }) +
-        `\n\nВАЖНО: Итоговый ответ пользователю сформируй строго на языке: ${lang === 'kk' ? 'казахском' : lang === 'en' ? 'английском' : 'русском'}.`
+        }) + `\n\nВАЖНО: Итоговый ответ пользователю сформируй строго на языке: ${lang === 'kk' ? 'казахском' : lang === 'en' ? 'английском' : 'русском'}.`
 
     const tools = getToolDefinitions()
 
-    const first = await chat(
-        [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: query }],
-        { tools, tool_choice: 'auto' }
-    )
+    const first = await chat([{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: query }], { tools, tool_choice: 'auto' })
 
     let answer: string
     if (first.toolCalls && first.toolCalls.length > 0) {

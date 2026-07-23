@@ -1,11 +1,7 @@
 import { isNotNull } from 'drizzle-orm'
 
 import { env } from '../../config/constants'
-import {
-    DEFAULT_SERVICE_CATEGORY,
-    SERVICE_CATEGORIES,
-    isServiceCategory
-} from '../../constants/service-categories'
+import { DEFAULT_SERVICE_CATEGORY, SERVICE_CATEGORIES, isServiceCategory } from '../../constants/service-categories'
 import type { ServiceCategory } from '../../constants/service-categories'
 import { db } from '../../db/client'
 import { services } from '../../db/schema'
@@ -49,10 +45,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 async function loadCachedCategories(): Promise<Map<string, ServiceCategory>> {
-    const rows = await db
-        .selectDistinct({ name: services.name, category: services.category })
-        .from(services)
-        .where(isNotNull(services.category))
+    const rows = await db.selectDistinct({ name: services.name, category: services.category }).from(services).where(isNotNull(services.category))
 
     const cache = new Map<string, ServiceCategory>()
     for (const row of rows) {
@@ -111,10 +104,7 @@ export async function classifyServiceNames(names: string[]): Promise<Map<string,
     const toClassify = distinctNames.filter((name) => !cache.has(name))
 
     if (toClassify.length === 0) {
-        log.info(
-            { module: 'service-classifier', total: distinctNames.length, cached: cache.size },
-            'All service names already categorized'
-        )
+        log.info({ module: 'service-classifier', total: distinctNames.length, cached: cache.size }, 'All service names already categorized')
         return cache
     }
 

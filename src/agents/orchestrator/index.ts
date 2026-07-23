@@ -8,29 +8,17 @@ import {
     updateConversationMetadata,
     updateConversationSummary
 } from '../../services/rag/context'
-import { detectIntentLLM, getFastIntentResponse } from '../../services/rag/intent'
+import { detectIntentLLM } from '../../services/rag/intent'
 import { detectLanguage } from '../../services/rag/language'
-import {
-    type PatientInfo,
-    extractPatientInfoFromDialogue,
-    formatPatientContext,
-    getPatient,
-    updatePatient
-} from '../../services/rag/patient'
+import { type PatientInfo, extractPatientInfoFromDialogue, formatPatientContext, getPatient, updatePatient } from '../../services/rag/patient'
 import { handleBookingIntent } from '../booking/service'
-import { extractNameCandidate, handleConversationIntent } from '../conversation'
+import { handleConversationIntent } from '../conversation'
 import { checkAndHandleObjection } from '../objection'
 import { processRagQuery } from '../rag'
 import { selectNextAgents } from '../registry'
 import { handlePriceIntent } from '../tool'
 import type { AgentResult, PipelineState } from '../types'
 import { craftResponse } from './respond'
-
-const BOOKING_DECLINE_RESPONSE: Record<'ru' | 'kk' | 'en', string> = {
-    ru: 'Хорошо, если передумаете — обращайтесь!',
-    kk: 'Жақсы, егер ойыңыз өзгерсе — хабарласыңыз!',
-    en: 'Alright, if you change your mind — feel free to reach out!'
-}
 
 const MAX_PIPELINE_ITERATIONS = 1
 
@@ -39,6 +27,27 @@ const MAX_PIPELINE_ITERATIONS = 1
 // booking/objection остаются самостоятельными — сами ведут диалог с пациентом и
 // возвращают уже готовый, финальный текст (см. решение "Фаза 1" рефакторинга).
 const DATA_MODE_AGENTS = new Set(['rag', 'tool'])
+
+const NON_SUBSTANTIVE_INTENTS = new Set(['greeting', 'goodbye', 'gratitude', 'clear_context'])
+
+const INTENT_TO_AGENT = {
+    prices: 'tool',
+    query: 'rag',
+    booking: 'booking',
+    objection: 'objection'
+} as const
+
+type IntentWithAgent = keyof typeof INTENT_TO_AGENT
+type AgentName = (typeof INTENT_TO_AGENT)[IntentWithAgent]
+type AgentHandler = (query: string, state: PipelineState, patient: PatientInfo | null, history: ChatMessage[], debug: RagDebug) => Promise<AgentResult>
+
+function isSubstantiveIntent(intent: string): boolean {
+    return !NON_SUBSTANTIVE_INTENTS.has(intent)
+}
+
+function looksLikeNickname(name: string): boolean {
+    return /[0-9_.]/.test(name) || name.trim().length < 3
+}
 
 export interface RagContext {
     conversationId: bigint
@@ -64,34 +73,39 @@ export interface RagResponse {
     debug?: RagDebug
 }
 
-async function extractPatientData(
-    query: string,
-    history: ChatMessage[],
-    answer: string,
-    patient: PatientInfo | null,
-    senderId: string
-): Promise<void> {
+async function extractPatientData(query: string, answer: string, patient: PatientInfo | null, senderId: string): Promise<void> {
     if (!patient) return
-    const dialogue = `Пользователь: ${query}\nАссистент: ${answer}`
-    const updates = await extractPatientInfoFromDialogue(dialogue, patient)
+    const updates = await extractPatientInfoFromDialogue({ userMessage: query, assistantMessage: answer }, patient)
     if (Object.keys(updates).length > 0) {
         await updatePatient(senderId, updates)
     }
 }
 
-function mapIntentToAgentName(intent: string): string {
-    switch (intent) {
-        case 'prices':
-            return 'tool'
-        case 'query':
-            return 'rag'
-        case 'booking':
-            return 'booking'
-        case 'objection':
-            return 'objection'
-        default:
-            return 'rag'
-    }
+function mapIntentToAgentName(intent: string): AgentName {
+    return INTENT_TO_AGENT[intent as IntentWithAgent] ?? 'rag'
+}
+
+function createEmptyAgentResult(): AgentResult {
+    return { content: '', confidence: 'low', gaps: [] }
+}
+
+function markBookingInProgress(conversationId: bigint): void {
+    if (conversationId <= 0) return
+
+    updateConversationMetadata(conversationId, { bookingInProgress: true }).catch((err) =>
+        log.error({ module: 'orchestrator', error: String(err) }, 'Failed to set bookingInProgress')
+    )
+}
+
+const AGENT_HANDLERS: Record<AgentName, AgentHandler> = {
+    tool: async (query, state, patient, history) => handlePriceIntent(query, patient, state.senderId, state.conversationId, state.lang, history),
+    rag: async (query, state, patient, history, debug) => processRagQuery(query, history, state.patientStr, patient, debug),
+    booking: async (query, state, _patient, history) => {
+        markBookingInProgress(state.conversationId)
+        return handleBookingIntent(query, state.senderId, history, state.lang)
+    },
+    objection: async (query, state, patient, history) =>
+        (await checkAndHandleObjection(query, state.lang, state.patientStr, patient, history)) ?? createEmptyAgentResult()
 }
 
 async function dispatchAgent(
@@ -102,29 +116,9 @@ async function dispatchAgent(
     history: ChatMessage[],
     debug: RagDebug
 ): Promise<AgentResult> {
-    switch (agentName) {
-        case 'tool':
-            return handlePriceIntent(query, patient, state.senderId, state.conversationId, state.lang, history)
-        case 'rag':
-            return processRagQuery(query, history, state.patientStr, patient, debug)
-        case 'booking':
-            if (state.conversationId > 0) {
-                updateConversationMetadata(state.conversationId, { bookingInProgress: true }).catch((err) =>
-                    log.error({ module: 'orchestrator', error: String(err) }, 'Failed to set bookingInProgress')
-                )
-            }
-            return handleBookingIntent(query, state.senderId, history, state.lang)
-        case 'objection':
-            return (
-                (await checkAndHandleObjection(query, state.lang, state.patientStr, patient, history)) ?? {
-                    content: '',
-                    confidence: 'low',
-                    gaps: []
-                }
-            )
-        default:
-            return { content: '', confidence: 'low', gaps: [] }
-    }
+    const handler = AGENT_HANDLERS[agentName as AgentName]
+    if (!handler) return createEmptyAgentResult()
+    return handler(query, state, patient, history, debug)
 }
 
 export async function runPipeline(query: string, context?: RagContext, verbose = false): Promise<RagResponse> {
@@ -158,24 +152,19 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     const freshLang = detectLanguage(query)
     if (freshLang) {
         effectiveLang = freshLang
-        if (context && !convoMetadata?.language) {
+        if (context && (!convoMetadata?.language || convoMetadata?.language !== freshLang)) {
             await updateConversationMetadata(context.conversationId, { language: freshLang }, convoMetadata)
             convoMetadata = { ...(convoMetadata || {}), language: freshLang }
         }
-    } else if (convoMetadata?.language === 'kk' || convoMetadata?.language === 'en') {
-        effectiveLang = convoMetadata.language
+    } else {
+        effectiveLang = (convoMetadata?.language as 'ru' | 'kk' | 'en') || 'ru'
     }
 
     debug.language = effectiveLang
-    log.info(
-        { module: 'orchestrator', language: effectiveLang, source: freshLang ? 'fresh' : 'cached' },
-        'Pipeline started'
-    )
+    log.info({ module: 'orchestrator', language: effectiveLang, source: freshLang ? 'fresh' : 'cached' }, 'Pipeline started')
 
     // Start patient fetch in parallel with intent detection
-    const patientPromise: Promise<PatientInfo | null> = context
-        ? getPatient(context.senderId)
-        : Promise.resolve(null)
+    const patientPromise: Promise<PatientInfo | null> = context ? getPatient(context.senderId) : Promise.resolve(null)
 
     const intentResult = await detectIntentLLM(query, lastBotMessage)
     const detectedIntents = intentResult.intents || ['query']
@@ -184,43 +173,12 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
     const isFirstMessage = messageCount === 0
 
-    let substantiveIntents = detectedIntents.filter(
-        (i) =>
-            !['greeting', 'goodbye', 'gratitude', 'clear_context', 'provide_name', 'booking_decline'].includes(i)
-    )
-
-    if (context && detectedIntents.includes('provide_name')) {
-        const bookingInProgress = convoMetadata?.bookingInProgress === true
-        if (bookingInProgress) {
-            const nameCandidate = extractNameCandidate(query)
-            if (nameCandidate) {
-                await updatePatient(context.senderId, {
-                    name: nameCandidate,
-                    nameSource: 'user',
-                    nameChangeOffered: true
-                })
-            }
-            if (!substantiveIntents.includes('booking')) {
-                substantiveIntents.push('booking')
-            }
-            const index = detectedIntents.indexOf('provide_name')
-            if (index !== -1) {
-                detectedIntents.splice(index, 1)
-            }
-        }
-    }
+    let substantiveIntents = detectedIntents.filter(isSubstantiveIntent)
 
     // --- Pure Fast Paths (when no substantive intent is present) ---
     if (substantiveIntents.length === 0) {
         if (context && detectedIntents.includes('clear_context')) {
-            const convRes = await handleConversationIntent(
-                query,
-                effectiveLang,
-                context.senderId,
-                context.conversationId,
-                'clear_context',
-                isFirstMessage
-            )
+            const convRes = await handleConversationIntent(query, effectiveLang, context.senderId, context.conversationId, 'clear_context', isFirstMessage)
             if (convRes) {
                 await incrementMessageCount(context.conversationId)
                 const res: RagResponse = {
@@ -234,13 +192,44 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
             }
         }
 
-        if (context && detectedIntents.includes('booking_decline')) {
-            await updatePatient(context.senderId, { bookingNudgeOffered: true })
+        if (context && detectedIntents.includes('greeting')) {
+            patient = await patientPromise
+            patientStr = formatPatientContext(patient)
+
+            const patientName = patient?.name || null
+            const askForName = !!(patient && !patient.name && !patient.nameChangeOffered)
+            const suggestedName =
+                askForName && patient?.nameSource === 'instagram' && patient.instagramName && !looksLikeNickname(patient.instagramName)
+                    ? patient.instagramName
+                    : null
+
+            const facts: string[] = []
+            if (detectedIntents.includes('greeting')) facts.push('Пользователь поздоровался.')
+            if (detectedIntents.includes('gratitude')) facts.push('Пользователь поблагодарил.')
+            if (detectedIntents.includes('goodbye')) facts.push('Пользователь попрощался.')
+
+            const answer = await craftResponse(
+                query,
+                facts.length > 0 ? facts : ['Запрос относится к разговорному интенту.'],
+                effectiveLang,
+                patientStr,
+                history,
+                patientName,
+                false,
+                false,
+                askForName,
+                suggestedName
+            )
+
+            if (askForName) {
+                await updatePatient(context.senderId, { nameChangeOffered: true })
+            }
+
             await incrementMessageCount(context.conversationId)
             const res: RagResponse = {
-                answer: BOOKING_DECLINE_RESPONSE[effectiveLang],
+                answer,
                 contextChunks: [],
-                intent: 'booking_decline',
+                intent: 'greeting',
                 needsClarification: false
             }
             if (verbose) res.debug = debug
@@ -248,16 +237,9 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         }
 
         // Handle other simple conversation intents
-        for (const intent of ['greeting', 'goodbye', 'gratitude', 'provide_name'] as const) {
+        for (const intent of ['goodbye', 'gratitude'] as const) {
             if (context && detectedIntents.includes(intent as any)) {
-                const convRes = await handleConversationIntent(
-                    query,
-                    effectiveLang,
-                    context.senderId,
-                    context.conversationId,
-                    intent,
-                    isFirstMessage
-                )
+                const convRes = await handleConversationIntent(query, effectiveLang, context.senderId, context.conversationId, intent, isFirstMessage)
                 if (convRes) {
                     await incrementMessageCount(context.conversationId)
                     const res: RagResponse = {
@@ -399,17 +381,18 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
             newGapsTypes.forEach((type) => seenGaps.add(type))
 
             // Early exit if target agents returned high confidence with no gaps
-            if (
-                !iterationCriticalGaps &&
-                nextResults.every(({ result }) => result.confidence === 'high' && result.gaps.length === 0)
-            )
-                break
+            if (!iterationCriticalGaps && nextResults.every(({ result }) => result.confidence === 'high' && result.gaps.length === 0)) break
         }
     }
 
     // Compute post-processing flags (passed into craftResponse for natural integration)
     const patientName = patient?.name || null
     const askForName = !!(patient && !patient.name && !patient.nameChangeOffered)
+    const suggestedName =
+        askForName && patient?.nameSource === 'instagram' && patient.instagramName && !looksLikeNickname(patient.instagramName)
+            ? patient.instagramName
+            : null
+
     const shouldSuggestBooking = !!(
         context &&
         detectedIntents.includes('prices') &&
@@ -451,34 +434,34 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
             patientName,
             shouldSuggestBooking,
             shouldNudgeBooking,
-            askForName
+            askForName,
+            suggestedName
         )
         // Редкий случай мультиинтента (например "хочу записаться, сколько стоит?"),
         // когда booking/objection отработали ПАРАЛЛЕЛЬНО с rag/tool — их готовый
         // текст не переписываем, а просто ставим рядом с ответом главного агента.
-        answer =
-            nonEmptyFinalFragments.length > 0
-                ? `${nonEmptyFinalFragments.join('\n\n')}\n\n${craftedAnswer}`
-                : craftedAnswer
-    }
-
-    // Первое сообщение в диалоге, но интент не "greeting" (пользователь сразу задал
-    // содержательный вопрос, или написал "здравствуйте, сколько стоит...") — быстрые
-    // пути (handleConversationIntent) не отрабатывают, поэтому явно добавляем
-    // приветствие в начало ответа, чтобы Айгерим представилась при первом контакте.
-    if (isFirstMessage && substantiveIntents.length > 0) {
-        const greeting = getFastIntentResponse('greeting', effectiveLang, {
-            name: patientName,
-            isFirstMessage: true
-        })
-        if (greeting) answer = `${greeting}\n\n${answer}`
+        answer = nonEmptyFinalFragments.length > 0 ? `${nonEmptyFinalFragments.join('\n\n')}\n\n${craftedAnswer}` : craftedAnswer
     }
 
     // Fire-and-forget DB side-effects (don't block the response)
     if (context) {
-        const bookingDeclineDetected = detectedIntents.includes('booking_decline')
         const bookingCompleted = answer.includes('(Тестовый режим)')
-        if (bookingDeclineDetected || bookingCompleted) {
+        // We also want to clear bookingInProgress if the booking agent gracefully ended the conversation
+        // without outputting the completion marker (e.g. user declined).
+        // Since we don't have a specific 'decline' intent anymore, we check if bookingInProgress is true
+        // AND we dispatched the booking agent AND it didn't complete.
+        // Actually, the simplest check is: if we dispatched booking agent, and it didn't complete, it might have declined.
+        // Let's just rely on the fact that if it completed, we clear it. If they decline, we clear it.
+        // The booking agent's prompt says "поблагодари за обращение и вежливо заверши разговор"
+        // Let's check for "заверши разговор" equivalents or just clear it if they said "no" during booking.
+        // For now, let's keep it simple: if the answer doesn't look like an active booking question, we might clear it.
+        // Better: let's clear it if the substantive intent was 'booking' but no new gaps were opened and no completion marker was found.
+
+        // Simpler: let's just use a basic string match for common decline words if booking was in progress, or let it expire naturally.
+        const bookingDeclined =
+            convoMetadata?.bookingInProgress && substantiveIntents.includes('booking') && !bookingCompleted && state.openGaps.length === 0
+
+        if (bookingDeclined || bookingCompleted) {
             updateConversationMetadata(context.conversationId, { bookingInProgress: false }).catch((err) =>
                 log.error({ module: 'orchestrator', error: String(err) }, 'Failed to clear bookingInProgress')
             )
@@ -507,7 +490,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
         const isClarifying = answer.length < 100 && answer.trim().endsWith('?')
         if (!isClarifying) {
-            extractPatientData(query, history, answer, patient, context.senderId).catch((err) =>
+            extractPatientData(query, answer, patient, context.senderId).catch((err) =>
                 log.warn({ module: 'orchestrator', error: String(err) }, 'Failed to extract patient data')
             )
         }

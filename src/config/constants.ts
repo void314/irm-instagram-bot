@@ -27,7 +27,7 @@ const env = createEnv({
             OPENROUTER_BASE_URL: v.optional(v.string(), 'https://openrouter.ai/api/v1'),
             OPENROUTER_API_KEY: v.optional(v.string()),
             LLM_MODEL: v.optional(v.string(), 'openai/gpt-4o-mini'),
-            INTENT_MODEL: v.optional(v.string(), 'openai/gpt-4o-mini'),
+            INTENT_MODEL: v.optional(v.string(), 'deepseek/deepseek-v4-flash'),
             SYNTHESIS_MODEL: v.optional(v.string(), 'qwen/qwen3.7-max'),
             RAG_MODEL: v.optional(v.string(), 'deepseek/deepseek-v4-flash'),
             TOOL_MODEL: v.optional(v.string(), 'deepseek/deepseek-v4-flash'),
@@ -39,14 +39,8 @@ const env = createEnv({
             EXTERNAL_API_BASE_URL: v.optional(v.string(), 'https://rk.etl.uzun.kz/api/v1')
         },
         shared: {
-            NODE_ENV: v.optional(
-                v.union([v.literal('development'), v.literal('production'), v.literal('test')]),
-                'development'
-            ),
-            VERCEL_ENV: v.optional(
-                v.union([v.literal('development'), v.literal('preview'), v.literal('production')]),
-                'development'
-            )
+            NODE_ENV: v.optional(v.union([v.literal('development'), v.literal('production'), v.literal('test')]), 'development'),
+            VERCEL_ENV: v.optional(v.union([v.literal('development'), v.literal('preview'), v.literal('production')]), 'development')
         }
     },
     values: process.env || Bun.env

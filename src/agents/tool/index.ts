@@ -46,10 +46,7 @@ async function extractCitizenshipFromQuery(query: string): Promise<'kz' | 'forei
         const citizenship = parsed.citizenship
 
         if (citizenship === 'kz' || citizenship === 'foreign') {
-            log.info(
-                { module: 'agent:tool', citizenship, source: 'llm_extraction' },
-                'Citizenship extracted from user response'
-            )
+            log.info({ module: 'agent:tool', citizenship, source: 'llm_extraction' }, 'Citizenship extracted from user response')
             return citizenship
         }
 

@@ -159,11 +159,7 @@ export const ragController = new Elysia({
                 return status(404, { error: 'Document not found' } as models.ErrorResponse400)
             }
 
-            const chunksRows = await db
-                .select({ text: chunks.text })
-                .from(chunks)
-                .where(eq(chunks.documentId, docId))
-                .orderBy(chunks.index)
+            const chunksRows = await db.select({ text: chunks.text }).from(chunks).where(eq(chunks.documentId, docId)).orderBy(chunks.index)
 
             const text = chunksRows.map((c) => c.text).join('\n\n')
 

@@ -23,10 +23,7 @@ export function initLearningWorkers() {
     })
 
     createWorker('apply-suggestion', async (job) => {
-        log.info(
-            { module: 'learning', jobId: job.id },
-            `Processing apply-suggestion job: ${job.data.suggestionId}`
-        )
+        log.info({ module: 'learning', jobId: job.id }, `Processing apply-suggestion job: ${job.data.suggestionId}`)
         await applySuggestion(BigInt(job.data.suggestionId))
     })
 

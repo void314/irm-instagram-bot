@@ -58,10 +58,7 @@ export async function checkGrounding(answer: string, chunks: ChunkWithScore[]): 
     // Теперь низкий score — самостоятельное, детерминированное основание для уточнения;
     // фразы-маркеры остаются как дополнительный (не единственный) сигнал.
     if (maxScore >= SCORE_THRESHOLD && !containsAmbiguity(answer)) {
-        log.debug(
-            { module: 'grounding', maxScore: maxScore.toFixed(3), threshold: SCORE_THRESHOLD },
-            'Grounding: passed (score OK, no ambiguity)'
-        )
+        log.debug({ module: 'grounding', maxScore: maxScore.toFixed(3), threshold: SCORE_THRESHOLD }, 'Grounding: passed (score OK, no ambiguity)')
         return { passed: true, needsClarification: false }
     }
 

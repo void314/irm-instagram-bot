@@ -43,15 +43,10 @@ export async function getConversationContext(conversationId: bigint): Promise<Fo
         .limit(MAX_HISTORY)
 
     const history: ChatMessage[] = [...recentMessages]
-        .map((m) => {
-            const role: ChatMessage['role'] = m.fromId === conv.senderId ? 'assistant' : 'user'
-
-            return {
-                role,
-                content: m.text || '',
-                tool_calls: []
-            }
-        })
+        .map((m): ChatMessage => ({
+            role: (m.fromId === conv.senderId ? 'user' : 'assistant') as 'user' | 'assistant',
+            content: m.text || ''
+        }))
         .slice(0, SUMMARY_THRESHOLD + 1)
         .reverse()
 
@@ -61,8 +56,7 @@ export async function getConversationContext(conversationId: bigint): Promise<Fo
     if (needsSummary && conv?.summary) {
         history.unshift({
             role: 'assistant' as const,
-            content: `[Краткое содержание предыдущего диалога: ${conv.summary}]\n\n`,
-            tool_calls: []
+            content: `[Краткое содержание предыдущего диалога: ${conv.summary}]\n\n`
         })
     }
 
@@ -89,10 +83,7 @@ export async function updateConversationMetadata(
     const meta = currentMetadata ? { ...currentMetadata } : {}
     Object.assign(meta, updates)
 
-    await db
-        .update(conversations)
-        .set({ metadata: meta, updatedAt: new Date() })
-        .where(eq(conversations.id, conversationId))
+    await db.update(conversations).set({ metadata: meta, updatedAt: new Date() }).where(eq(conversations.id, conversationId))
 }
 
 export async function updateConversationSummary(conversationId: bigint): Promise<void> {

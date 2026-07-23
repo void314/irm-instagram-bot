@@ -50,11 +50,7 @@ export function getToolDefinitions(): ToolDefinition[] {
     return TOOL_DEFINITIONS
 }
 
-export async function executeTool(
-    functionName: string,
-    args: Record<string, unknown>,
-    patient?: PatientInfo | null
-): Promise<ToolResult> {
+export async function executeTool(functionName: string, args: Record<string, unknown>, patient?: PatientInfo | null): Promise<ToolResult> {
     const fn = toolMap[functionName]
     if (!fn) {
         throw new Error(`Unknown tool: ${functionName}`)

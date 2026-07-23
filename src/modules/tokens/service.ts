@@ -23,12 +23,7 @@ export class TokenService {
         return decryptToken(row.tokenEncrypted, row.tokenIv)
     }
 
-    async saveToken(
-        igId: string,
-        username: string | null,
-        accessToken: string,
-        expiresAt: Date | null
-    ): Promise<void> {
+    async saveToken(igId: string, username: string | null, accessToken: string, expiresAt: Date | null): Promise<void> {
         const { ciphertext, iv } = await encryptToken(accessToken)
 
         await db
@@ -95,10 +90,7 @@ export class TokenService {
 
             if (!res.ok || !data.access_token) {
                 const msg = data.error?.message || 'Token refresh failed'
-                await db
-                    .update(accounts)
-                    .set({ refreshError: msg, lastRefreshAt: new Date() })
-                    .where(eq(accounts.igId, igId))
+                await db.update(accounts).set({ refreshError: msg, lastRefreshAt: new Date() }).where(eq(accounts.igId, igId))
                 return { success: false, error: msg }
             }
 
@@ -119,10 +111,7 @@ export class TokenService {
             return { success: true }
         } catch (err) {
             const msg = String(err)
-            await db
-                .update(accounts)
-                .set({ refreshError: msg, lastRefreshAt: new Date() })
-                .where(eq(accounts.igId, igId))
+            await db.update(accounts).set({ refreshError: msg, lastRefreshAt: new Date() }).where(eq(accounts.igId, igId))
             return { success: false, error: msg }
         }
     }

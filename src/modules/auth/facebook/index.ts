@@ -41,12 +41,7 @@ export const authController = new Elysia({
             }
 
             if (result.igBusinessAccount) {
-                await tokenService.saveToken(
-                    result.igBusinessAccount.igId,
-                    result.igBusinessAccount.username ?? null,
-                    result.pageAccessToken,
-                    null
-                )
+                await tokenService.saveToken(result.igBusinessAccount.igId, result.igBusinessAccount.username ?? null, result.pageAccessToken, null)
             }
 
             return result
@@ -68,11 +63,7 @@ export const authController = new Elysia({
     .get(
         '/callback',
         async ({ query, facebookAuthService }) => {
-            return await facebookAuthService.exchangeCallbackCode(
-                query.code,
-                query.redirect_uri,
-                query.error_description
-            )
+            return await facebookAuthService.exchangeCallbackCode(query.code, query.redirect_uri, query.error_description)
         },
         {
             query: 'facebookCallbackQuery',

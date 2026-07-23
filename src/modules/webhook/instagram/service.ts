@@ -10,13 +10,7 @@ import { log } from '../../../services/logger'
 import { ensurePatient, fetchInstagramUserInfo, updatePatient } from '../../../services/rag/patient'
 import { describeImage, transcribeAudio } from '../../../services/transcription'
 import { TokenService } from '../../tokens'
-import type {
-    InstagramWebhookPayload,
-    SubscribeErrorResponse400,
-    SubscribeResponse200,
-    WebhookErrorResponse403,
-    WebhookEventResponse200
-} from './model'
+import type { InstagramWebhookPayload, SubscribeErrorResponse400, SubscribeResponse200, WebhookErrorResponse403, WebhookEventResponse200 } from './model'
 
 type SendMessageResult =
     | {
@@ -40,10 +34,7 @@ type WebhookVerificationResult =
       }
 
 const WEBHOOK_SUCCESS_RESPONSE: WebhookEventResponse200 = { status: 'ok' }
-const SUBSCRIBE_PERMISSION_HINT = [
-    'Requires pages_messaging permission.',
-    'Get a fresh token via POST /api/auth/facebook/token-from-user'
-].join(' ')
+const SUBSCRIBE_PERMISSION_HINT = ['Requires pages_messaging permission.', 'Get a fresh token via POST /api/auth/facebook/token-from-user'].join(' ')
 
 const tokenService = new TokenService()
 
@@ -79,9 +70,7 @@ class InstagramMessagingService {
             return { status: 'error', message: 'Missing FACEBOOK_PAGE_ID' }
         }
 
-        const url = new URL(
-            `https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION}/${env.FACEBOOK_PAGE_ID}/messages`
-        )
+        const url = new URL(`https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION}/${env.FACEBOOK_PAGE_ID}/messages`)
         url.searchParams.set('access_token', pageToken)
 
         const response = await fetch(url, {
@@ -186,11 +175,7 @@ export class InstagramWebhookService {
         private readonly instagramCommentService = new InstagramCommentService()
     ) {}
 
-    private async subscribeField(
-        entityId: string,
-        fields: string,
-        token: string
-    ): Promise<{ ok: true; data: unknown } | { ok: false; error: string }> {
+    private async subscribeField(entityId: string, fields: string, token: string): Promise<{ ok: true; data: unknown } | { ok: false; error: string }> {
         const base = `https://graph.facebook.com/${env.FACEBOOK_GRAPH_API_VERSION || 'v25.0'}`
         const url = new URL(`${base}/${entityId}/subscribed_apps`)
         url.searchParams.set('subscribed_fields', fields)
@@ -268,10 +253,7 @@ export class InstagramWebhookService {
         try {
             const entries = payload.entry || []
 
-            log.info(
-                { module: 'webhook', object: payload.object, entryCount: entries.length },
-                '[webhook] payload received'
-            )
+            log.info({ module: 'webhook', object: payload.object, entryCount: entries.length }, '[webhook] payload received')
 
             for (const entry of entries) {
                 await this.processEntry(entry)
@@ -340,16 +322,10 @@ export class InstagramWebhookService {
                     if (pageToken) {
                         finalText = await transcribeAudio(audioAttachment.payload.url, pageToken)
                         messageMetadata = { type: 'voice', audioUrl: audioAttachment.payload.url }
-                        log.info(
-                            { module: 'webhook', senderId, transcriptLength: finalText.length },
-                            '[webhook] voice message transcribed'
-                        )
+                        log.info({ module: 'webhook', senderId, transcriptLength: finalText.length }, '[webhook] voice message transcribed')
                     }
                 } catch (err) {
-                    log.error(
-                        { module: 'webhook', senderId, error: String(err) },
-                        '[webhook] voice transcription failed'
-                    )
+                    log.error({ module: 'webhook', senderId, error: String(err) }, '[webhook] voice transcription failed')
                 }
             }
         }
@@ -371,22 +347,14 @@ export class InstagramWebhookService {
                         messageMetadata = imageMeta
                     }
 
-                    log.info(
-                        { module: 'webhook', senderId, descriptionLength: description.length },
-                        '[webhook] image described'
-                    )
+                    log.info({ module: 'webhook', senderId, descriptionLength: description.length }, '[webhook] image described')
                 }
             } catch (err) {
-                log.error(
-                    { module: 'webhook', senderId, error: String(err) },
-                    '[webhook] image description failed'
-                )
+                log.error({ module: 'webhook', senderId, error: String(err) }, '[webhook] image description failed')
             }
         }
 
-        const isBusinessRecipient =
-            env.INSTAGRAM_BUSINESS_ID &&
-            (recipientId === env.INSTAGRAM_BUSINESS_ID || entryId === env.INSTAGRAM_BUSINESS_ID)
+        const isBusinessRecipient = env.INSTAGRAM_BUSINESS_ID && (recipientId === env.INSTAGRAM_BUSINESS_ID || entryId === env.INSTAGRAM_BUSINESS_ID)
 
         if (isBusinessRecipient) {
             log.info({ module: 'webhook', senderId, recipientId }, '[webhook] messaging event handled')
@@ -394,9 +362,7 @@ export class InstagramWebhookService {
         }
     }
 
-    private async processChangeEvent(
-        change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]
-    ) {
+    private async processChangeEvent(change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]) {
         if (change.field === 'messages') {
             await this.processMessageChange(change)
         } else if (change.field === 'comments') {
@@ -406,9 +372,7 @@ export class InstagramWebhookService {
         }
     }
 
-    private async processMessageChange(
-        change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]
-    ) {
+    private async processMessageChange(change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]) {
         const changeValue = change.value as
             | {
                   from?: { id?: string }
@@ -448,16 +412,10 @@ export class InstagramWebhookService {
                     if (pageToken) {
                         finalText = await transcribeAudio(audioAttachment.payload.url, pageToken)
                         messageMetadata = { type: 'voice', audioUrl: audioAttachment.payload.url }
-                        log.info(
-                            { module: 'webhook', senderId, transcriptLength: finalText.length },
-                            '[webhook] voice message transcribed'
-                        )
+                        log.info({ module: 'webhook', senderId, transcriptLength: finalText.length }, '[webhook] voice message transcribed')
                     }
                 } catch (err) {
-                    log.error(
-                        { module: 'webhook', senderId, error: String(err) },
-                        '[webhook] voice transcription failed'
-                    )
+                    log.error({ module: 'webhook', senderId, error: String(err) }, '[webhook] voice transcription failed')
                 }
             }
         }
@@ -479,16 +437,10 @@ export class InstagramWebhookService {
                         messageMetadata = imageMeta
                     }
 
-                    log.info(
-                        { module: 'webhook', senderId, descriptionLength: description.length },
-                        '[webhook] image described'
-                    )
+                    log.info({ module: 'webhook', senderId, descriptionLength: description.length }, '[webhook] image described')
                 }
             } catch (err) {
-                log.error(
-                    { module: 'webhook', senderId, error: String(err) },
-                    '[webhook] image description failed'
-                )
+                log.error({ module: 'webhook', senderId, error: String(err) }, '[webhook] image description failed')
             }
         }
 
@@ -498,9 +450,7 @@ export class InstagramWebhookService {
         }
     }
 
-    private async processCommentEvent(
-        change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]
-    ) {
+    private async processCommentEvent(change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]) {
         const value = change.value as
             | {
                   id?: string
@@ -525,10 +475,7 @@ export class InstagramWebhookService {
 
         const ownMedia = await this.instagramCommentService.isOwnMedia(mediaId)
         if (!ownMedia) {
-            log.info(
-                { module: 'webhook', commentId, mediaId },
-                '[webhook] comment on non-owned media, skipping reply'
-            )
+            log.info({ module: 'webhook', commentId, mediaId }, '[webhook] comment on non-owned media, skipping reply')
             await this.storeComment(commentId, mediaId, senderId, senderUsername, text, null, false, null)
             return
         }
@@ -544,9 +491,7 @@ export class InstagramWebhookService {
         await this.handleCommentWithReply(commentId, mediaId, senderId, senderUsername, text || '')
     }
 
-    private async processMentionEvent(
-        change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]
-    ) {
+    private async processMentionEvent(change: NonNullable<NonNullable<InstagramWebhookPayload['entry']>[number]['changes']>[number]) {
         const value = change.value as
             | {
                   comment_id?: string
@@ -575,10 +520,7 @@ export class InstagramWebhookService {
 
         const ownMedia = await this.instagramCommentService.isOwnMedia(mediaId)
         if (!ownMedia) {
-            log.info(
-                { module: 'webhook', commentId, mediaId },
-                '[webhook] mention on non-owned media, storing only'
-            )
+            log.info({ module: 'webhook', commentId, mediaId }, '[webhook] mention on non-owned media, storing only')
             await this.storeComment(commentId, mediaId, senderId, senderUsername, text, null, false, null)
             return
         }
@@ -629,13 +571,7 @@ export class InstagramWebhookService {
         }
     }
 
-    private async handleCommentWithReply(
-        commentId: string,
-        mediaId: string,
-        senderId: string,
-        senderUsername: string | null | undefined,
-        text: string
-    ) {
+    private async handleCommentWithReply(commentId: string, mediaId: string, senderId: string, senderUsername: string | null | undefined, text: string) {
         log.info({ module: 'webhook', commentId, mediaId, senderId }, '[webhook] processing comment with reply')
 
         await ensurePatient(senderId)
@@ -655,41 +591,18 @@ export class InstagramWebhookService {
         const replyResult = await this.instagramCommentService.replyToComment(commentId, answer)
 
         if (replyResult.status === 'error') {
-            log.error(
-                { module: 'webhook', commentId, error: replyResult.message },
-                '[webhook] comment reply failed'
-            )
+            log.error({ module: 'webhook', commentId, error: replyResult.message }, '[webhook] comment reply failed')
         } else {
-            log.info(
-                { module: 'webhook', commentId, intent, answerLength: answer.length },
-                '[webhook] comment reply sent'
-            )
+            log.info({ module: 'webhook', commentId, intent, answerLength: answer.length }, '[webhook] comment reply sent')
         }
 
         await this.storeComment(commentId, mediaId, senderId, senderUsername, text, null, false, answer)
 
-        await this.storeComment(
-            commentId + '_reply',
-            mediaId,
-            senderId,
-            senderUsername,
-            answer,
-            commentId,
-            true,
-            null
-        )
+        await this.storeComment(commentId + '_reply', mediaId, senderId, senderUsername, answer, commentId, true, null)
     }
 
-    private async handleIncomingMessage(
-        senderId: string,
-        text: string | null,
-        messageMetadata?: Record<string, unknown>,
-        mid?: string
-    ) {
-        log.info(
-            { module: 'webhook', senderId, hasText: !!text, textLength: text?.length ?? 0, mid },
-            '[webhook] incoming message'
-        )
+    private async handleIncomingMessage(senderId: string, text: string | null, messageMetadata?: Record<string, unknown>, mid?: string) {
+        log.info({ module: 'webhook', senderId, hasText: !!text, textLength: text?.length ?? 0, mid }, '[webhook] incoming message')
 
         const [convRow, patient] = await Promise.all([
             db
@@ -740,10 +653,7 @@ export class InstagramWebhookService {
                     log.info({ module: 'webhook', mid }, '[webhook] duplicate message detected, skipping')
                     return
                 }
-                log.info(
-                    { module: 'webhook', conversationId: conv.id.toString(), mid },
-                    '[webhook] message stored'
-                )
+                log.info({ module: 'webhook', conversationId: conv.id.toString(), mid }, '[webhook] message stored')
             } else {
                 // Fallback for messages without mid
                 db.insert(messages)
@@ -754,10 +664,7 @@ export class InstagramWebhookService {
                         metadata: messageMetadata
                     })
                     .then(() => {
-                        log.info(
-                            { module: 'webhook', conversationId: conv.id.toString() },
-                            '[webhook] message stored'
-                        )
+                        log.info({ module: 'webhook', conversationId: conv.id.toString() }, '[webhook] message stored')
                     })
                     .catch((err) => {
                         log.error({ module: 'webhook', error: String(err) }, '[webhook] message insert failed')
@@ -827,10 +734,7 @@ export class InstagramWebhookService {
             for (const chunk of chunks) {
                 const result = await this.instagramMessagingService.sendTextMessage(senderId, chunk)
                 if (result.status === 'error') {
-                    log.error(
-                        { module: 'webhook', error: result.message, chunkLength: chunk.length },
-                        '[webhook] reply chunk failed'
-                    )
+                    log.error({ module: 'webhook', error: result.message, chunkLength: chunk.length }, '[webhook] reply chunk failed')
                     lastOk = false
                     break
                 }
@@ -850,17 +754,11 @@ export class InstagramWebhookService {
                 return
             }
 
-            log.info(
-                { module: 'webhook', chunkCount: chunks.length, totalLength: answer.length, intent },
-                '[webhook] reply sent'
-            )
+            log.info({ module: 'webhook', chunkCount: chunks.length, totalLength: answer.length, intent }, '[webhook] reply sent')
         } catch (err) {
             log.error({ module: 'webhook', error: String(err) }, '[webhook] pipeline error')
 
-            const fallback = await this.instagramMessagingService.sendTextMessage(
-                senderId,
-                env.WEBHOOK_AUTO_REPLY_TEXT
-            )
+            const fallback = await this.instagramMessagingService.sendTextMessage(senderId, env.WEBHOOK_AUTO_REPLY_TEXT)
             if (fallback.status === 'error') {
                 console.error('[Webhook] Fallback reply failed:', fallback.message)
             }

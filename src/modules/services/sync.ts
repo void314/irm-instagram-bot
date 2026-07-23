@@ -101,13 +101,7 @@ export async function fetchAndUpdateServices(): Promise<SyncResult> {
             const treeData = (await treeRes.json()) as ServicesTreeResponse
             if (!treeData.success || !treeData.data) continue
 
-            const flat = flattenTree(
-                treeData.data,
-                null,
-                owned.branchRef1cId,
-                owned.priceListId,
-                owned.citizenship
-            )
+            const flat = flattenTree(treeData.data, null, owned.branchRef1cId, owned.priceListId, owned.citizenship)
             allItems.push(...flat)
         } catch (err) {
             log.error(

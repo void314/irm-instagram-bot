@@ -11,11 +11,7 @@ function getAuthHeaders(): Record<string, string> {
     }
 }
 
-export async function rerankChunks(
-    query: string,
-    chunks: HybridSearchResult[],
-    topK: number
-): Promise<HybridSearchResult[]> {
+export async function rerankChunks(query: string, chunks: HybridSearchResult[], topK: number): Promise<HybridSearchResult[]> {
     if (chunks.length <= topK) return chunks
 
     const body = {

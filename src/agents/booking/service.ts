@@ -28,16 +28,13 @@ function formatToday(): string {
 }
 
 function describeKnownField(label: string, value: string | null | undefined): string {
-    return value
-        ? `${label}: ${value} (уже известно, повторно не спрашивай)`
-        : `${label}: неизвестно — нужно спросить`
+    return value ? `${label}: ${value} (уже известно, повторно не спрашивай)` : `${label}: неизвестно — нужно спросить`
 }
 
 function buildKnownPatientBlock(patient: PatientInfo | null, lang: 'ru' | 'kk' | 'en'): string {
     if (!patient) return 'О пациенте пока ничего не известно.'
 
-    const citizenshipLabel =
-        patient.citizenship === 'kz' ? 'РК' : patient.citizenship === 'foreign' ? 'иностранный гражданин' : null
+    const citizenshipLabel = patient.citizenship === 'kz' ? 'РК' : patient.citizenship === 'foreign' ? 'иностранный гражданин' : null
 
     return [
         describeKnownField('ФИО (как обращаться)', patient.name),
@@ -121,12 +118,7 @@ ${COMPLETION_MARKER}
     )
 }
 
-export async function handleBookingIntent(
-    query: string,
-    senderId: string,
-    history: ChatMessage[],
-    lang: 'ru' | 'kk' | 'en' = 'ru'
-): Promise<AgentResult> {
+export async function handleBookingIntent(query: string, senderId: string, history: ChatMessage[], lang: 'ru' | 'kk' | 'en' = 'ru'): Promise<AgentResult> {
     log.info({ module: 'booking' }, 'Handling booking intent')
 
     const patient = await getPatient(senderId)
