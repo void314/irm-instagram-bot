@@ -124,7 +124,7 @@ ${COMPLETION_MARKER}
 export async function handleBookingIntent(
     query: string,
     senderId: string,
-    history: string,
+    history: ChatMessage[],
     lang: 'ru' | 'kk' | 'en' = 'ru'
 ): Promise<AgentResult> {
     log.info({ module: 'booking' }, 'Handling booking intent')
@@ -135,11 +135,9 @@ export async function handleBookingIntent(
     const systemPrompt = buildSystemPrompt(patient, lang)
 
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }]
-
-    if (history && history !== 'нет') {
-        messages.push({ role: 'system', content: `Предыдущий диалог:\n${history}` })
+    if (history.length > 0) {
+        messages.push(...history)
     }
-
     messages.push({ role: 'user', content: query })
 
     const first = await chat(messages, { tools, tool_choice: 'auto' })

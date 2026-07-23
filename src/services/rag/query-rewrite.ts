@@ -1,5 +1,5 @@
 import { env } from '../../config/constants'
-import { chat } from '../llm/openrouter'
+import { type ChatMessage, chat } from '../llm/openrouter'
 import { log } from '../logger'
 
 const EXPANDER_MODEL = env.LLM_MODEL
@@ -100,7 +100,7 @@ const PRONOUN_MARKERS = [
     'қайда'
 ]
 
-function needsRewrite(query: string, history: { role: string; content: string }[]): boolean {
+function needsRewrite(query: string, history: ChatMessage[]): boolean {
     if (history.length === 0) return false
     const words = query.trim().split(/\s+/)
     if (words.length > 10) return false
@@ -110,10 +110,7 @@ function needsRewrite(query: string, history: { role: string; content: string }[
     return false
 }
 
-async function expandQuery(
-    query: string,
-    history: { role: 'user' | 'assistant'; content: string }[]
-): Promise<string> {
+async function expandQuery(query: string, history: ChatMessage[]): Promise<string> {
     const historyBlock = history
         .map((m) => `${m.role === 'user' ? 'Пользователь' : 'Ассистент'}: ${m.content}`)
         .join('\n')
@@ -161,10 +158,7 @@ function dedupeKeepOrder(items: string[]): string[] {
     return out
 }
 
-export async function resolveSearchQueries(
-    query: string,
-    history: { role: 'user' | 'assistant'; content: string }[]
-): Promise<string[]> {
+export async function resolveSearchQueries(query: string, history: ChatMessage[]): Promise<string[]> {
     const lower = query.toLowerCase()
     const extras: string[] = []
 

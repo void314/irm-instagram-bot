@@ -1,6 +1,6 @@
 import { env } from '../../config/constants'
 import { getBranchesList } from '../../constants/branches'
-import { chat } from '../../services/llm/openrouter'
+import { type ChatMessage, chat } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
 import { type PatientInfo, updatePatient } from '../../services/rag/patient'
 import { executeTool } from '../../services/tools'
@@ -66,7 +66,7 @@ export async function handlePriceIntent(
     senderId: string,
     conversationId: bigint,
     lang: 'ru' | 'kk' | 'en' = 'ru',
-    history?: string
+    history?: ChatMessage[]
 ): Promise<AgentResult> {
     const toolArgs: Record<string, unknown> = { query, lang }
     let updatedPatient = patient

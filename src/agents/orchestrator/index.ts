@@ -1,4 +1,5 @@
 import { findBranchByNameOrCity } from '../../constants/branches'
+import type { ChatMessage } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
 import {
     getConversationContext,
@@ -65,7 +66,7 @@ export interface RagResponse {
 
 async function extractPatientData(
     query: string,
-    _history: string,
+    history: ChatMessage[],
     answer: string,
     patient: PatientInfo | null,
     senderId: string
@@ -98,7 +99,7 @@ async function dispatchAgent(
     query: string,
     state: PipelineState,
     patient: PatientInfo | null,
-    history: string,
+    history: ChatMessage[],
     debug: RagDebug
 ): Promise<AgentResult> {
     switch (agentName) {
@@ -137,7 +138,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         groundingPassed: true
     }
 
-    let history = ''
+    let history: ChatMessage[] = []
     let patientStr = ''
     let patient: PatientInfo | null = null
     let convoMetadata = null
@@ -292,7 +293,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
     // --- Iterative Pipeline with Parallel Dispatch ---
     const state: PipelineState = {
         query,
-        history: history || 'нет',
+        history,
         patientStr,
         lang: effectiveLang,
         accumulatedContent: [],
@@ -506,7 +507,7 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
 
         const isClarifying = answer.length < 100 && answer.trim().endsWith('?')
         if (!isClarifying) {
-            extractPatientData(query, history || 'нет', answer, patient, context.senderId).catch((err) =>
+            extractPatientData(query, history, answer, patient, context.senderId).catch((err) =>
                 log.warn({ module: 'orchestrator', error: String(err) }, 'Failed to extract patient data')
             )
         }

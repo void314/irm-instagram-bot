@@ -61,13 +61,12 @@ function injectPrompt(template: string, replacements: Record<string, string>): s
 
 export async function processRagQuery(
     query: string,
-    history: string,
+    history: ChatMessage[],
     patientStr: string,
     patient: PatientInfo | null,
     debug: RagDebug
 ): Promise<AgentResult> {
-    const parsedHistory = parseHistory(history)
-    const searchQueries = await resolveSearchQueries(query, parsedHistory)
+    const searchQueries = await resolveSearchQueries(query, history)
     if (searchQueries.length > 1) {
         log.info({ module: 'agent:rag', original: query, expanded: searchQueries.slice(1) }, 'Query expansion')
     }
@@ -113,7 +112,6 @@ export async function processRagQuery(
 
     const tools = getToolDefinitions()
     const baseReplacements: Record<string, string> = {
-        history: history || 'нет',
         patientContext: patientStr || '',
         today: formatToday()
     }

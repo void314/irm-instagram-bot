@@ -28,7 +28,7 @@ export async function checkAndHandleObjection(
     detectedLang: 'ru' | 'kk' | 'en',
     patientStr: string,
     patient: PatientInfo | null,
-    history: string
+    history: ChatMessage[]
 ): Promise<AgentResult | null> {
     log.info({ module: 'agent:objection', query: query.slice(0, 60) }, 'Handling objection')
 
@@ -41,18 +41,14 @@ export async function checkAndHandleObjection(
         injectPrompt(SYSTEM_PROMPT_OBJECTION, {
             scripts: scriptText,
             patientContext: patientStr || '',
-            today: formatToday(),
-            history: history || 'нет'
+            today: formatToday()
         }) +
         `\n\nВАЖНО: Итоговый ответ пользователю сформируй строго на языке: ${lang === 'kk' ? 'казахском' : lang === 'en' ? 'английском' : 'русском'}.`
 
     const tools = getToolDefinitions()
 
     const first = await chat(
-        [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: query }
-        ],
+        [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: query }],
         { tools, tool_choice: 'auto' }
     )
 

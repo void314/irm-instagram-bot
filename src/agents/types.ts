@@ -1,3 +1,5 @@
+import type { ChatMessage } from '../services/llm/openrouter'
+
 export interface Gap {
     type:
         | 'price_info'
@@ -27,7 +29,7 @@ type Lang = 'ru' | 'kk' | 'en'
 
 export interface PipelineState {
     query: string
-    history: string
+    history: ChatMessage[]
     patientStr: string
     lang: Lang
     accumulatedContent: string[]

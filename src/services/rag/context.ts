@@ -1,9 +1,9 @@
-import { desc, eq, sql } from 'drizzle-orm'
+import { asc, desc, eq, sql } from 'drizzle-orm'
 
 import { env } from '../../config/constants'
 import { db } from '../../db/client'
 import { conversations, messages } from '../../db/schema'
-import { chat } from '../llm/openrouter'
+import { type ChatMessage, chat } from '../llm/openrouter'
 import { SYSTEM_PROMPT_SUMMARY } from './prompts'
 
 const BOT_ID = env.INSTAGRAM_BUSINESS_ID
@@ -15,7 +15,7 @@ function role(fromId: string): string {
 }
 
 export interface FormattedContext {
-    history: string
+    history: ChatMessage[]
     messageCount: number
     needsSummary: boolean
     metadata: Record<string, unknown> | null
@@ -24,6 +24,7 @@ export interface FormattedContext {
 export async function getConversationContext(conversationId: bigint): Promise<FormattedContext> {
     const conv = await db
         .select({
+            senderId: conversations.senderId,
             summary: conversations.summary,
             messageCount: conversations.messageCount,
             metadata: conversations.metadata
@@ -41,37 +42,42 @@ export async function getConversationContext(conversationId: bigint): Promise<Fo
         .orderBy(desc(messages.createdAt))
         .limit(MAX_HISTORY)
 
-    const orderedMessages = [...recentMessages].reverse()
-    const historyLines = orderedMessages.map((m) => `${role(m.fromId)}: ${m.text}`)
+    const history: ChatMessage[] = [...recentMessages]
+        .map((m) => {
+            const role: ChatMessage['role'] = m.fromId === conv.senderId ? 'assistant' : 'user'
 
-    const needsSummary = messageCount > SUMMARY_THRESHOLD && conv?.summary
+            return {
+                role,
+                content: m.text || '',
+                tool_calls: []
+            }
+        })
+        .slice(0, SUMMARY_THRESHOLD + 1)
+        .reverse()
 
-    let result = ''
+    // * Диалоговый контекст для LLM больше SUMMARY_THRESHOLD  сообщений
+    const needsSummary = !!(messageCount > SUMMARY_THRESHOLD && conv?.summary)
+
     if (needsSummary && conv?.summary) {
-        result += `[Краткое содержание предыдущего диалога: ${conv.summary}]\n\n`
+        history.unshift({
+            role: 'assistant' as const,
+            content: `[Краткое содержание предыдущего диалога: ${conv.summary}]\n\n`,
+            tool_calls: []
+        })
     }
 
-    result += historyLines.join('\n')
-
     return {
-        history: result,
+        history,
         messageCount,
         needsSummary: !!needsSummary,
         metadata: conv?.metadata ?? null
     }
 }
 
-export function getLastBotMessage(history: string): string | null {
-    if (!history || history === 'нет') return null
-    const lines = history
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean)
-    for (let i = lines.length - 1; i >= 0; i--) {
-        if (lines[i].startsWith('assistant:')) {
-            return lines[i].slice('assistant:'.length).trim()
-        }
-    }
+export function getLastBotMessage(history: ChatMessage[]): string | null {
+    if (!history || history.length === 0) return null
+    const lines = history.find((m) => m.role === 'assistant')
+    if (lines) return lines?.content || ''
     return null
 }
 
