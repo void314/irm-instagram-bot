@@ -61,7 +61,12 @@ export async function chat(messages: ChatMessage[], opts?: ChatOptions): Promise
         model,
         messages,
         temperature: opts?.temperature ?? 0.7,
-        max_tokens: opts?.max_tokens ?? 1024
+        max_tokens: opts?.max_tokens ?? 1024,
+        provider: {
+            only: ['novita/fp8', 'venice/fp8', 'azure', 'openai', 'deepinfra/bf16'],
+            allow_fallbacks: false,
+            sort: 'latency'
+        }
     }
 
     if (opts?.tools) body.tools = opts.tools

@@ -2,144 +2,48 @@ import { env } from '../../config/constants'
 import { type ChatMessage, chat } from '../llm/openrouter'
 import { log } from '../logger'
 
-const EXPANDER_MODEL = env.LLM_MODEL
+const QUERY_ANALYZER_MODEL = env.INTENT_MODEL
 
-const PRONOUN_MARKERS = [
-    // Russian
-    'он',
-    'она',
-    'оно',
-    'они',
-    'его',
-    'её',
-    'ee',
-    'их',
-    'это',
-    'эти',
-    'этот',
-    'эта',
-    'этом',
-    'этому',
-    'там',
-    'тут',
-    'здесь',
-    'оттуда',
-    'такой',
-    'такая',
-    'такие',
-    'такого',
-    'таком',
-    'сколько',
-    'столько',
-    'настолько',
-    'у них',
-    'у него',
-    'у неё',
-    'у нее',
-    'про него',
-    'про неё',
-    'про нее',
-    'про них',
-    'о нём',
-    'о нем',
-    'о ней',
-    'о них',
-    'а у',
-    'а для',
-    'а с',
-    'что по',
-    'а что',
-    'а как',
-    'а когда',
-    'а где',
-    'какие',
-    'какой',
-    'какая',
-    'какое',
-    'почём',
-    'расценк',
-    'стоимост',
-    // English
-    'he',
-    'she',
-    'it',
-    'they',
-    'him',
-    'her',
-    'his',
-    'its',
-    'their',
-    'them',
-    'this',
-    'that',
-    'these',
-    'those',
-    'there',
-    'here',
-    'what about',
-    'how about',
-    'tell me more',
-    // Kazakh
-    'ол',
-    'оның',
-    'оған',
-    'оны',
-    'онда',
-    'одан',
-    'бұл',
-    'сол',
-    'осы',
-    'анау',
-    'мынау',
-    'сонда',
-    'мұнда',
-    'осында',
-    'қанша',
-    'неше',
-    'қалай',
-    'қайда'
-]
-
-function needsRewrite(query: string, history: ChatMessage[]): boolean {
-    if (history.length === 0) return false
-    const words = query.trim().split(/\s+/)
-    if (words.length > 10) return false
-    const lower = query.toLowerCase()
-    if (PRONOUN_MARKERS.some((m) => lower.includes(m))) return true
-    if (words.length <= 4) return true
-    return false
+interface SearchQueryPlanRaw {
+    semanticQuery?: unknown
+    supplementalQueries?: unknown
 }
 
-async function expandQuery(query: string, history: ChatMessage[]): Promise<string> {
-    const historyBlock = history.map((m) => `${m.role === 'user' ? 'Пользователь' : 'Ассистент'}: ${m.content}`).join('\n')
+export interface ResolvedSearchQueries {
+    queries: string[]
+    semanticQuery: string
+}
 
-    const prompt = `Given the conversation history and the latest user query, rewrite the query as a standalone search query for a medical clinic knowledge base. Include all relevant context from the conversation. Output ONLY the search query text, nothing else.
+const SEARCH_QUERY_ANALYZER_PROMPT = [
+    'You optimize retrieval queries for a fertility clinic knowledge base.',
+    'Return ONLY valid JSON with EXACTLY these keys and types:',
+    '{"semanticQuery": string, "supplementalQueries": string[]}',
+    '',
+    'Rules:',
+    '- semanticQuery: the best standalone search query that preserves the latest user intent.',
+    '- If the latest query is already self-contained, keep semanticQuery very close to it.',
+    '- supplementalQueries: 0 to 3 additional search queries that improve recall for the same intent.',
+    '- Use supplementalQueries only when they add distinct retrieval value, not paraphrase noise.',
+    '- Queries may target services, prices, programs, doctors, branches, schedules, tests, or procedures when relevant.',
+    '- Do not invent facts that are not present in the conversation.',
+    '- Do not output explanations, markdown, or code fences.',
+    '- Keep each query short, specific, and suitable for vector or keyword search.',
+    '- Avoid duplicates and near-duplicates.',
+    '- Prefer wording most likely to match the clinic knowledge base and the conversation context.'
+].join('\n')
 
-History:
-${historyBlock}
+function extractJsonObject(raw: string): SearchQueryPlanRaw {
+    const trimmed = raw.trim()
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+    if (fenced) return JSON.parse(fenced[1].trim()) as SearchQueryPlanRaw
 
-Latest query: ${query}
-
-Search query:`
-
-    try {
-        const response = await chat([{ role: 'user', content: prompt }], {
-            model: EXPANDER_MODEL,
-            temperature: 0,
-            max_tokens: 80
-        })
-
-        const expanded = response.content.trim()
-        if (expanded) {
-            log.info({ module: 'query-rewrite', original: query, expanded }, 'query expanded')
-            return expanded
-        }
-
-        return query
-    } catch (err) {
-        log.warn({ module: 'query-rewrite', error: String(err) }, 'query expander failed')
-        return query
+    const firstBrace = trimmed.indexOf('{')
+    const lastBrace = trimmed.lastIndexOf('}')
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1)) as SearchQueryPlanRaw
     }
+
+    return {}
 }
 
 function dedupeKeepOrder(items: string[]): string[] {
@@ -156,24 +60,70 @@ function dedupeKeepOrder(items: string[]): string[] {
     return out
 }
 
-export async function resolveSearchQueries(query: string, history: ChatMessage[]): Promise<string[]> {
-    const lower = query.toLowerCase()
-    const extras: string[] = []
+function normalizePlan(query: string, raw: SearchQueryPlanRaw): ResolvedSearchQueries {
+    const semanticQuery = typeof raw.semanticQuery === 'string' && raw.semanticQuery.trim() ? raw.semanticQuery.trim() : query.trim()
+    const supplementalQueries = Array.isArray(raw.supplementalQueries)
+        ? raw.supplementalQueries
+              .filter((item): item is string => typeof item === 'string')
+              .map((item) => item.trim())
+              .filter(Boolean)
+              .slice(0, 3)
+        : []
 
-    const wantsServices = /(?:услуг(?:а|и)?|процедур(?:а|ы)?|направлени(?:е|я)|что\s+делаете|что\s+лечите|какие\s+услуги)/iu.test(lower)
-    if (wantsServices) {
-        extras.push('прайс услуги')
-        extras.push('список услуг клиники')
+    return {
+        queries: dedupeKeepOrder([query, ...supplementalQueries, semanticQuery]),
+        semanticQuery
     }
+}
 
-    if (!needsRewrite(query, history)) {
-        return dedupeKeepOrder([query, ...extras])
-    }
+export async function resolveSearchQueries(query: string, history: ChatMessage[]): Promise<ResolvedSearchQueries> {
     try {
-        const rewritten = await expandQuery(query, history)
-        return dedupeKeepOrder([query, ...extras, rewritten])
+        const payload = JSON.stringify({
+            latest_query: query,
+            history: history.map((message) => ({
+                role: message.role,
+                content: typeof message.content === 'string' ? message.content : ''
+            }))
+        })
+
+        let result: { content: string }
+        try {
+            result = await chat(
+                [
+                    { role: 'system', content: SEARCH_QUERY_ANALYZER_PROMPT },
+                    { role: 'user', content: payload }
+                ],
+                {
+                    model: QUERY_ANALYZER_MODEL,
+                    temperature: 0,
+                    max_tokens: 220,
+                    response_format: { type: 'json_object' }
+                }
+            )
+        } catch {
+            result = await chat(
+                [
+                    { role: 'system', content: SEARCH_QUERY_ANALYZER_PROMPT },
+                    { role: 'user', content: payload }
+                ],
+                { model: QUERY_ANALYZER_MODEL, temperature: 0, max_tokens: 260 }
+            )
+        }
+
+        const parsed = extractJsonObject(result.content)
+        const resolved = normalizePlan(query, parsed)
+        log.info(
+            {
+                module: 'query-rewrite',
+                original: query,
+                semanticQuery: resolved.semanticQuery,
+                searchQueries: resolved.queries
+            },
+            'search query plan resolved'
+        )
+        return resolved
     } catch (err) {
         log.warn({ module: 'query-rewrite', error: String(err) }, 'resolve search queries failed')
-        return dedupeKeepOrder([query, ...extras])
+        return { queries: dedupeKeepOrder([query]), semanticQuery: query }
     }
 }

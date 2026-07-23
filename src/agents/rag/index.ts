@@ -13,34 +13,6 @@ import { executeTool, getToolDefinitions } from '../../services/tools'
 import { type RagDebug } from '../orchestrator'
 import type { AgentResult } from '../types'
 
-// We'll move it or just use it from there
-
-const SYNTHETIC_BOOSTS = new Set(['прайс услуги', 'список услуг клиники'])
-
-function pickSemanticQuery(originalQuery: string, searchQueries: string[]): string {
-    for (let i = searchQueries.length - 1; i >= 0; i--) {
-        const q = searchQueries[i]?.trim().toLowerCase()
-        if (!q) continue
-        if (!SYNTHETIC_BOOSTS.has(q)) return searchQueries[i]
-    }
-    return originalQuery
-}
-
-function parseHistory(historyStr: string): { role: 'user' | 'assistant'; content: string }[] {
-    if (!historyStr || historyStr === 'нет') return []
-    return historyStr
-        .split('\n')
-        .map((line) => {
-            const colonIndex = line.indexOf(': ')
-            if (colonIndex === -1) return null
-            const role = line.slice(0, colonIndex).trim()
-            const content = line.slice(colonIndex + 2).trim()
-            if (role !== 'user' && role !== 'assistant') return null
-            return { role: role as 'user' | 'assistant', content }
-        })
-        .filter(Boolean) as { role: 'user' | 'assistant'; content: string }[]
-}
-
 function formatToday(): string {
     const now = new Date()
     return now.toLocaleDateString('ru-RU', {
@@ -66,12 +38,11 @@ export async function processRagQuery(
     patient: PatientInfo | null,
     debug: RagDebug
 ): Promise<AgentResult> {
-    const searchQueries = await resolveSearchQueries(query, history)
+    const { queries: searchQueries, semanticQuery } = await resolveSearchQueries(query, history)
     if (searchQueries.length > 1) {
         log.info({ module: 'agent:rag', original: query, expanded: searchQueries.slice(1) }, 'Query expansion')
     }
 
-    const semanticQuery = pickSemanticQuery(query, searchQueries)
     const emb = await generateEmbedding(semanticQuery)
 
     const allResults = await Promise.all(searchQueries.map((q) => hybridSearch(q, q.toLowerCase() === semanticQuery.toLowerCase() ? emb : undefined)))
