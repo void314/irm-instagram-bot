@@ -14,12 +14,12 @@ export const tokenCronController = new Elysia({
             const result = await tokenService.refreshAllActive()
             if (result.refreshed > 0 || result.failed > 0) {
                 log.info(
-                    `[TokenCron] refreshed=${result.refreshed} failed=${result.failed}`,
-                    result.errors.length > 0 ? `errors=${result.errors.join(', ')}` : ''
+                    { errors: result.errors.length > 0 ? result.errors : undefined },
+                    `[TokenCron] refreshed=${result.refreshed} failed=${result.failed}`
                 )
             }
         } catch (err) {
-            log.error('[TokenCron] error:', err)
+            log.error({ err }, '[TokenCron] error')
         }
     }
 
