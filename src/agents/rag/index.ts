@@ -1,43 +1,14 @@
 import { env } from '../../config/constants'
-import { isLearningEnabled } from '../../config/learning'
-import { type ChatMessage, type ToolCall, chat, generateEmbedding } from '../../services/llm/openrouter'
+import { type ChatMessage, generateEmbedding } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
-import { type GroundingResult, checkGrounding } from '../../services/rag/grounding'
+import { checkGrounding } from '../../services/rag/grounding'
 import { type HybridSearchResult, hybridSearch } from '../../services/rag/hybrid'
-import { findPendingOverrides } from '../../services/rag/override'
-import { type PatientInfo } from '../../services/rag/patient'
-import { DATA_PROMPT_NO_CONTEXT, DATA_PROMPT_WITH_CONTEXT } from '../../services/rag/prompts'
 import { resolveSearchQueries } from '../../services/rag/query-rewrite'
 import { rerankChunks } from '../../services/rag/reranker'
-import { executeTool, getToolDefinitions } from '../../services/tools'
 import { type RagDebug } from '../orchestrator'
 import type { AgentResult } from '../types'
 
-function formatToday(): string {
-    const now = new Date()
-    return now.toLocaleDateString('ru-RU', {
-        day: '2-digit',
-        month: 'long',
-        year: 'numeric',
-        weekday: 'long'
-    })
-}
-
-function injectPrompt(template: string, replacements: Record<string, string>): string {
-    let result = template
-    for (const [key, value] of Object.entries(replacements)) {
-        result = result.replace(`{${key}}`, value)
-    }
-    return result
-}
-
-export async function processRagQuery(
-    query: string,
-    history: ChatMessage[],
-    patientStr: string,
-    patient: PatientInfo | null,
-    debug: RagDebug
-): Promise<AgentResult> {
+export async function processRagQuery(query: string, history: ChatMessage[], debug: RagDebug): Promise<AgentResult> {
     const { queries: searchQueries, semanticQuery } = await resolveSearchQueries(query, history)
     if (searchQueries.length > 1) {
         log.info({ module: 'agent:rag', original: query, expanded: searchQueries.slice(1) }, 'Query expansion')
@@ -77,63 +48,8 @@ export async function processRagQuery(
         'Hybrid search results'
     )
 
-    const tools = getToolDefinitions()
-    const baseReplacements: Record<string, string> = {
-        patientContext: patientStr || '',
-        today: formatToday()
-    }
-
-    async function callLlm(systemPrompt: string): Promise<{ content: string; toolCalls?: ToolCall[] }> {
-        return chat(
-            [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: query }
-            ],
-            { tools, tool_choice: 'auto', model: env.RAG_MODEL }
-        )
-    }
-
-    async function callLlmWithTools(systemPrompt: string): Promise<{ content: string; usedTools: boolean }> {
-        const first = await callLlm(systemPrompt)
-
-        if (first.toolCalls && first.toolCalls.length > 0) {
-            log.info({ module: 'agent:rag', count: first.toolCalls.length }, 'Tools executing')
-
-            const toolMessages: ChatMessage[] = [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: query },
-                { role: 'assistant', content: first.content, tool_calls: first.toolCalls }
-            ]
-
-            for (const tc of first.toolCalls) {
-                try {
-                    const toolResult = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
-                    toolMessages.push({ role: 'tool', content: toolResult.answer, tool_call_id: tc.id })
-                } catch (err) {
-                    toolMessages.push({ role: 'tool', content: `Ошибка: ${String(err)}`, tool_call_id: tc.id })
-                }
-            }
-
-            const second = await chat(toolMessages)
-            return { content: second.content, usedTools: true }
-        }
-
-        return { content: first.content, usedTools: false }
-    }
-
     if (searchResults.length === 0) {
-        const pendingOverrides = isLearningEnabled ? await findPendingOverrides(query) : []
-        let overrideStr = ''
-        if (pendingOverrides.length > 0) {
-            overrideStr = `\n\nВАЖНОЕ ИСПРАВЛЕНИЕ АДМИНИСТРАТОРА (УЧЕСТЬ ПРИ ОТВЕТЕ):\n` + pendingOverrides.join('\n')
-        }
-
-        const systemMsg =
-            injectPrompt(DATA_PROMPT_NO_CONTEXT, baseReplacements) +
-            overrideStr +
-            `\n\nФакты излагай на языке: ${debug.language === 'kk' ? 'казахском' : debug.language === 'en' ? 'английском' : 'русском'}.`
-        const { content: answer } = await callLlmWithTools(systemMsg)
-        return { content: answer, confidence: 'partial', gaps: [] }
+        return { content: '', confidence: 'low', gaps: [] }
     }
 
     const allScores = searchResults.map((r) => r.score)
@@ -141,39 +57,14 @@ export async function processRagQuery(
     debug.topScore = Math.max(...allScores)
     debug.topChunkSnippet = searchResults[0].text.slice(0, 120).replace(/\n/g, ' ')
 
+    const { passed } = checkGrounding(searchResults)
+    debug.groundingPassed = passed
+
     const contextStr = searchResults.map((r) => `[релевантность: ${(r.score * 100).toFixed(0)}%]\n${r.text}`).join('\n\n---\n\n')
 
-    const pendingOverrides = isLearningEnabled ? await findPendingOverrides(query) : []
-    let overrideStr = ''
-    if (pendingOverrides.length > 0) {
-        overrideStr = `\n\nВАЖНОЕ ИСПРАВЛЕНИЕ АДМИНИСТРАТОРА (УЧЕСТЬ ПРИ ОТВЕТЕ):\n` + pendingOverrides.join('\n')
+    return {
+        content: contextStr,
+        confidence: passed ? 'high' : 'low',
+        gaps: []
     }
-
-    const systemPrompt =
-        injectPrompt(DATA_PROMPT_WITH_CONTEXT, {
-            ...baseReplacements,
-            context: contextStr + overrideStr
-        }) + `\n\nФакты излагай на языке: ${debug.language === 'kk' ? 'казахском' : debug.language === 'en' ? 'английском' : 'русском'}.`
-
-    const { content: answer, usedTools } = await callLlmWithTools(systemPrompt)
-
-    const grounding: GroundingResult = usedTools ? { passed: true, needsClarification: false } : await checkGrounding(answer, searchResults)
-
-    debug.groundingPassed = grounding.passed
-
-    if (grounding.needsClarification) {
-        // Релевантность найденного контекста низкая — сообщаем об этом главному
-        // агенту как факт, а не как готовый вопрос. Сам он решит, как и что
-        // переспросить, с учётом истории диалога (чтобы не дублировать вопросы).
-        return {
-            content:
-                `Релевантность найденной информации по запросу пользователя низкая — ` +
-                `данных в базе знаний недостаточно для точного ответа. ` +
-                `Нужно уточнение у пользователя (например: тип программы, гражданство, этап лечения).`,
-            confidence: 'low',
-            gaps: []
-        }
-    }
-
-    return { content: answer, confidence: 'high', gaps: [] }
 }

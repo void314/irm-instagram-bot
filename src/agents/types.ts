@@ -1,7 +1,7 @@
 import type { ChatMessage } from '../services/llm/openrouter'
 
 export interface Gap {
-    type: 'price_info' | 'service_composition' | 'schedule_info' | 'doctor_info' | 'general_knowledge' | 'booking_data'
+    type: 'price_info' | 'service_composition' | 'schedule_info' | 'doctor_info' | 'general_knowledge'
     description: string
     priority: 'critical' | 'nice_to_have'
 }

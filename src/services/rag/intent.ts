@@ -1,5 +1,5 @@
 import { env } from '../../config/constants'
-import { type ChatMessage, chat } from '../llm/openrouter'
+import { chat } from '../llm/openrouter'
 import { log } from '../logger'
 
 export interface IntentResult {
@@ -146,17 +146,12 @@ export async function detectIntentLLM(query: string, lastBotMessage?: string | n
             { role: 'user' as const, content: query }
         ]
 
-        let result: { content: string }
-        try {
-            result = await chat(messages, {
-                model: env.INTENT_MODEL,
-                temperature: 0,
-                max_tokens: 100,
-                response_format: { type: 'json_object' }
-            })
-        } catch {
-            result = await chat(messages, { model: env.INTENT_MODEL, temperature: 0, max_tokens: 200 })
-        }
+        const result = await chat(messages, {
+            model: env.INTENT_MODEL,
+            temperature: 0,
+            maxTokens: 150,
+            responseFormat: { type: 'json_object' }
+        })
 
         const parsed = extractJsonObject(result.content)
         log.debug(

@@ -1,5 +1,5 @@
 import { findBranchByNameOrCity } from '../../constants/branches'
-import type { ChatMessage } from '../../services/llm/openrouter'
+import { ChatMessage } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
 import {
     getConversationContext,
@@ -11,21 +11,19 @@ import {
 import { detectIntentLLM } from '../../services/rag/intent'
 import { detectLanguage } from '../../services/rag/language'
 import { type PatientInfo, extractPatientInfoFromDialogue, formatPatientContext, getPatient, updatePatient } from '../../services/rag/patient'
-import { handleBookingIntent } from '../booking/service'
 import { handleConversationIntent } from '../conversation'
-import { checkAndHandleObjection } from '../objection'
 import { processRagQuery } from '../rag'
 import { selectNextAgents } from '../registry'
 import { handlePriceIntent } from '../tool'
 import type { AgentResult, PipelineState } from '../types'
+import { buildBookingContext, buildObjectionContext } from './context'
 import { craftResponse } from './respond'
 
-const MAX_PIPELINE_ITERATIONS = 1
+const MAX_PIPELINE_ITERATIONS = 3
 
 // Агенты, которые отдают СЫРЫЕ ФАКТЫ (без тона/приветствий/CTA) и поэтому ВСЕГДА
 // должны пройти через главного агента (craftResponse), прежде чем попасть к пациенту.
-// booking/objection остаются самостоятельными — сами ведут диалог с пациентом и
-// возвращают уже готовый, финальный текст (см. решение "Фаза 1" рефакторинга).
+// booking/objection теперь являются режимами оркестратора (Unified Orchestrator Pattern)
 const DATA_MODE_AGENTS = new Set(['rag', 'tool'])
 
 const NON_SUBSTANTIVE_INTENTS = new Set(['greeting', 'goodbye', 'gratitude', 'clear_context'])
@@ -39,10 +37,12 @@ const INTENT_TO_AGENT = {
 
 type IntentWithAgent = keyof typeof INTENT_TO_AGENT
 type AgentName = (typeof INTENT_TO_AGENT)[IntentWithAgent]
+type PendingToolClarification = 'branch' | 'citizenship'
 type PipelineLang = NonNullable<RagDebug['language']>
 type ConversationMetadata = Record<string, unknown> & {
     language?: PipelineLang
     bookingInProgress?: boolean
+    pendingToolClarifications?: PendingToolClarification[]
 }
 type AgentHandler = (query: string, state: PipelineState, patient: PatientInfo | null, history: ChatMessage[], debug: RagDebug) => Promise<AgentResult>
 type DispatchResult = { agentName: string; result: AgentResult }
@@ -121,6 +121,24 @@ function mapIntentToAgentName(intent: string): AgentName {
     return INTENT_TO_AGENT[intent as IntentWithAgent] ?? 'rag'
 }
 
+function shouldAddRagCompanionForPrices(pipelineIntents: readonly string[], convoMetadata: ConversationMetadata | null): boolean {
+    if (!pipelineIntents.includes('prices')) return false
+    if (pipelineIntents.includes('booking') || pipelineIntents.includes('objection')) return false
+    if (pipelineIntents.includes('query')) return false
+
+    return (convoMetadata?.pendingToolClarifications?.length ?? 0) === 0
+}
+
+function resolvePrimaryAgents(pipelineIntents: readonly string[], convoMetadata: ConversationMetadata | null): AgentName[] {
+    const agentNames = new Set<AgentName>(pipelineIntents.map(mapIntentToAgentName))
+
+    if (shouldAddRagCompanionForPrices(pipelineIntents, convoMetadata)) {
+        agentNames.add('rag')
+    }
+
+    return agentNames.size > 0 ? [...agentNames] : ['rag']
+}
+
 function createEmptyAgentResult(): AgentResult {
     return { content: '', confidence: 'low', gaps: [] }
 }
@@ -168,13 +186,16 @@ function markBookingInProgress(conversationId: bigint): void {
 
 const AGENT_HANDLERS: Record<AgentName, AgentHandler> = {
     tool: async (query, state, patient, history) => handlePriceIntent(query, patient, state.senderId, state.conversationId, state.lang, history),
-    rag: async (query, state, patient, history, debug) => processRagQuery(query, history, state.patientStr, patient, debug),
-    booking: async (query, state, _patient, history) => {
+    rag: async (query, _state, _patient, history, debug) => processRagQuery(query, history, debug),
+    booking: async (query, state, patient, history) => {
         markBookingInProgress(state.conversationId)
-        return handleBookingIntent(query, state.senderId, history, state.lang)
+        const bookingContext = buildBookingContext(patient, state.lang)
+        return handleBookingMode(query, state, patient, history, bookingContext)
     },
-    objection: async (query, state, patient, history) =>
-        (await checkAndHandleObjection(query, state.lang, state.patientStr, patient, history)) ?? createEmptyAgentResult()
+    objection: async (query, state, patient, history) => {
+        const objectionContext = buildObjectionContext(query, state.patientStr)
+        return handleObjectionMode(query, state, patient, history, objectionContext)
+    }
 }
 
 async function dispatchAgent(
@@ -188,6 +209,86 @@ async function dispatchAgent(
     const handler = AGENT_HANDLERS[agentName as AgentName]
     if (!handler) return createEmptyAgentResult()
     return handler(query, state, patient, history, debug)
+}
+
+// Booking Mode: структурированный сбор данных через LLM
+async function handleBookingMode(
+    query: string,
+    state: PipelineState,
+    patient: PatientInfo | null,
+    history: ChatMessage[],
+    bookingContext: string
+): Promise<AgentResult> {
+    const { chat } = await import('../../services/llm/openrouter')
+    const { getToolDefinitions, executeTool } = await import('../../services/tools')
+
+    const tools = getToolDefinitions()
+    const messages: ChatMessage[] = [{ role: 'system', content: bookingContext }, ...history, { role: 'user', content: query }]
+
+    const first = await chat(messages, { tools, toolChoice: 'auto' })
+
+    let finalAnswer = first.content || ''
+
+    if (first.toolCalls && first.toolCalls.length > 0) {
+        messages.push({ role: 'assistant', content: first.content || '', toolCalls: first.toolCalls })
+
+        for (const tc of first.toolCalls) {
+            try {
+                const toolResult = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
+                messages.push({ role: 'tool', content: toolResult.answer, toolCallId: tc.id })
+            } catch (err) {
+                messages.push({ role: 'tool', content: `Ошибка: ${String(err)}`, toolCallId: tc.id })
+            }
+        }
+
+        const second = await chat(messages)
+        finalAnswer = second.content || finalAnswer
+    }
+
+    // Проверка завершения записи
+    if (finalAnswer.includes('(Тестовый режим)')) {
+        await updatePatient(state.senderId, { hasBookedConsultation: true })
+        log.info({ module: 'booking', senderId: state.senderId }, 'Booking completed in emulation mode')
+    }
+
+    return { content: finalAnswer, confidence: 'high', gaps: [] }
+}
+
+// Objection Mode: обработка возражений через LLM
+async function handleObjectionMode(
+    query: string,
+    state: PipelineState,
+    patient: PatientInfo | null,
+    history: ChatMessage[],
+    objectionContext: string
+): Promise<AgentResult> {
+    const { chat } = await import('../../services/llm/openrouter')
+    const { getToolDefinitions, executeTool } = await import('../../services/tools')
+
+    const tools = getToolDefinitions()
+    const messages: ChatMessage[] = [{ role: 'system', content: objectionContext }, ...history, { role: 'user', content: query }]
+
+    const first = await chat(messages, { tools, toolChoice: 'auto' })
+
+    let answer = first.content || ''
+
+    if (first.toolCalls && first.toolCalls.length > 0) {
+        messages.push({ role: 'assistant', content: first.content || '', toolCalls: first.toolCalls })
+
+        for (const tc of first.toolCalls) {
+            try {
+                const toolResult = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
+                messages.push({ role: 'tool', content: toolResult.answer, toolCallId: tc.id })
+            } catch (err) {
+                messages.push({ role: 'tool', content: `Ошибка: ${String(err)}`, toolCallId: tc.id })
+            }
+        }
+
+        const second = await chat(messages)
+        answer = second.content || answer
+    }
+
+    return { content: answer, confidence: 'high', gaps: [] }
 }
 
 async function loadConversationBootstrap(query: string, context: RagContext | undefined, debug: RagDebug): Promise<ConversationBootstrap> {
@@ -439,14 +540,15 @@ async function executeAgentPipeline(params: {
     debug: RagDebug
     detectedIntents: string[]
     substantiveIntents: string[]
+    convoMetadata: ConversationMetadata | null
 }): Promise<PipelineExecutionResult> {
-    const { query, state, history, debug, detectedIntents, substantiveIntents } = params
+    const { query, state, history, debug, detectedIntents, substantiveIntents, convoMetadata } = params
     let { patient } = params
     const calledAgents: string[] = []
     const dataFragments: string[] = []
     const finalFragments: string[] = []
     const pipelineIntents = substantiveIntents.length > 0 ? substantiveIntents : detectedIntents
-    const primaryAgentsToCall = [...new Set(pipelineIntents.map(mapIntentToAgentName))]
+    const primaryAgentsToCall = resolvePrimaryAgents(pipelineIntents, convoMetadata)
 
     const initialResults = await dispatchAgentBatch({
         agentNames: primaryAgentsToCall,
@@ -646,6 +748,11 @@ function runPipelineSideEffects(params: {
     if (bookingDeclined || bookingCompleted) {
         updateConversationMetadata(context.conversationId, { bookingInProgress: false }).catch(logAsyncError('Failed to clear bookingInProgress'))
     }
+    if (!substantiveIntents.includes('prices') && (convoMetadata?.pendingToolClarifications?.length ?? 0) > 0) {
+        updateConversationMetadata(context.conversationId, { pendingToolClarifications: [] }).catch(
+            logAsyncError('Failed to clear pending tool clarification', 'warn')
+        )
+    }
     if (shouldSuggestBooking || shouldNudgeBooking) {
         updatePatient(context.senderId, { bookingNudgeOffered: true }).catch(logAsyncError('Failed to update booking nudge'))
     }
@@ -705,7 +812,8 @@ export async function runPipeline(query: string, context?: RagContext, verbose =
         history,
         debug,
         detectedIntents,
-        substantiveIntents
+        substantiveIntents,
+        convoMetadata
     })
     const flags = getPostProcessingFlags({
         context,

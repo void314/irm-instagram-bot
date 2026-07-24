@@ -1,168 +1,121 @@
+import { OpenRouter } from '@openrouter/sdk'
+import type { ChatContentImage, ChatContentText, ChatFunctionTool, ChatMessages, ChatRequest, ChatResult, ChatToolCall } from '@openrouter/sdk/models'
+import type { CreateEmbeddingsResponseBody } from '@openrouter/sdk/models/operations/createembeddings'
+
 import { env } from '../../config/constants'
 import { log } from '../logger'
 
-export interface ToolDefinition {
-    type: 'function'
-    function: {
-        name: string
-        description: string
-        parameters: Record<string, unknown>
-    }
+const openrouter = new OpenRouter({
+    apiKey: env.OPENROUTER_API_KEY
+})
+
+export type ToolDefinition = ChatFunctionTool
+export type ToolCall = ChatToolCall
+export type ChatMessage = ChatMessages
+export type ChatOptions = Pick<ChatRequest, 'model' | 'temperature' | 'maxTokens' | 'tools' | 'toolChoice' | 'responseFormat'>
+
+export type MultimodalContent = ChatContentText | ChatContentImage
+
+function isChatResult(value: unknown): value is ChatResult {
+    return typeof value === 'object' && value !== null && 'choices' in value
 }
 
-export interface ChatOptions {
-    model?: string
-    temperature?: number
-    max_tokens?: number
-    tools?: ToolDefinition[]
-    tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } }
-    response_format?: { type: 'json_object' }
+function isEmbeddingsResponseBody(value: unknown): value is CreateEmbeddingsResponseBody {
+    return typeof value === 'object' && value !== null && 'data' in value
 }
-
-export interface ToolCall {
-    id: string
-    type: 'function'
-    function: {
-        name: string
-        arguments: string
-    }
-}
-
-interface ChatResponse {
-    choices: {
-        message: {
-            content: string | null
-            tool_calls?: ToolCall[]
-        }
-    }[]
-}
-
-function getHeaders(): Record<string, string> {
-    const key = env.OPENROUTER_API_KEY
-    if (!key) {
-        throw new Error('OPENROUTER_API_KEY is not set')
-    }
-    return {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json'
-    }
-}
-
-export type MultimodalContent = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'auto' } }
-
-export type ChatMessage =
-    | { role: 'system' | 'user'; content: string | MultimodalContent[] }
-    | { role: 'assistant'; content: string | null; tool_calls?: ToolCall[] }
-    | { role: 'tool'; content: string; tool_call_id: string }
 
 export async function chat(messages: ChatMessage[], opts?: ChatOptions): Promise<{ content: string; toolCalls?: ToolCall[] }> {
     const model = opts?.model || env.LLM_MODEL
-    const body: Record<string, unknown> = {
-        model,
-        messages,
-        temperature: opts?.temperature ?? 0.7,
-        max_tokens: opts?.max_tokens ?? 1024,
-        provider: {
-            only: ['novita/fp8', 'venice/fp8', 'azure', 'openai', 'deepinfra/bf16'],
-            allow_fallbacks: false,
-            sort: 'latency'
-        }
-    }
-
-    if (opts?.tools) body.tools = opts.tools
-    if (opts?.tool_choice) body.tool_choice = opts.tool_choice
-    if (opts?.response_format) body.response_format = opts.response_format
-
     const t0 = performance.now()
 
     log.debug(
         {
             module: 'llm:chat',
             model,
-            messages: messages.map((m) => ({
-                role: m.role,
-                contentLength: m.content?.length ?? 0,
-                toolCalls: (m as any).tool_calls?.length ?? 0
+            messages: messages.map((message) => ({
+                role: message.role,
+                contentLength: typeof message.content === 'string' ? message.content.length : (message.content?.length ?? 0),
+                toolCalls: message.role === 'assistant' ? (message.toolCalls?.length ?? 0) : 0
             })),
             toolsCount: opts?.tools?.length ?? 0
         },
         'LLM request'
     )
 
-    const res = await fetch(`${env.OPENROUTER_BASE_URL}/chat/completions`, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify(body)
-    })
+    try {
+        const response = await openrouter.chat.send({
+            chatRequest: {
+                ...opts,
+                model,
+                messages,
+                temperature: opts?.temperature ?? 0.7,
+                maxTokens: opts?.maxTokens ?? 1024,
+                stream: false
+            }
+        })
 
-    const duration = (performance.now() - t0).toFixed(0)
+        if (!isChatResult(response)) {
+            throw new Error('Streaming response is not supported in llm/openrouter.ts wrapper')
+        }
 
-    if (!res.ok) {
-        const text = await res.text()
-        log.error({ module: 'llm:chat', model, status: res.status, duration: `${duration}ms` }, `LLM error: ${text.slice(0, 200)}`)
-        throw new Error(`OpenRouter chat error ${res.status}: ${text}`)
-    }
+        const duration = (performance.now() - t0).toFixed(0)
+        const msg = response.choices[0]?.message
 
-    const data = (await res.json()) as ChatResponse
-    const msg = data.choices[0].message
+        log.debug(
+            {
+                module: 'llm:chat',
+                model,
+                duration: `${duration}ms`,
+                contentLength: typeof msg?.content === 'string' ? msg.content.length : 0,
+                toolCallsCount: msg?.toolCalls?.length ?? 0
+            },
+            'LLM response'
+        )
 
-    log.debug(
-        {
-            module: 'llm:chat',
-            model,
-            duration: `${duration}ms`,
-            contentLength: msg.content?.length ?? 0,
-            toolCallsCount: msg.tool_calls?.length ?? 0
-        },
-        'LLM response'
-    )
-
-    return {
-        content: msg.content ?? '',
-        toolCalls: msg.tool_calls
+        return {
+            content: typeof msg?.content === 'string' ? msg.content : '',
+            toolCalls: msg?.toolCalls
+        }
+    } catch (err) {
+        const duration = (performance.now() - t0).toFixed(0)
+        log.error({ module: 'llm:chat', model, duration: `${duration}ms`, error: String(err) }, 'LLM error')
+        throw err
     }
 }
 
 export async function generateEmbedding(text: string): Promise<number[]> {
-    log.debug({ module: 'llm:embed', model: env.EMBED_MODEL, inputLength: text.length }, 'Embedding request')
-
+    const model = env.EMBED_MODEL
     const t0 = performance.now()
 
-    const res = await fetch(`${env.OPENROUTER_BASE_URL}/embeddings`, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({
-            model: env.EMBED_MODEL,
-            input: text
+    log.debug({ module: 'llm:embed', model, inputLength: text.length }, 'Embedding request')
+
+    try {
+        const response = await openrouter.embeddings.generate({
+            requestBody: {
+                model,
+                input: text
+            }
         })
-    })
 
-    const duration = (performance.now() - t0).toFixed(0)
+        if (!isEmbeddingsResponseBody(response)) {
+            throw new Error('Unexpected embeddings response format')
+        }
 
-    if (!res.ok) {
-        const errText = await res.text()
-        log.error(
-            { module: 'llm:embed', model: env.EMBED_MODEL, status: res.status, duration: `${duration}ms` },
-            `Embedding error: ${errText.slice(0, 200)}`
-        )
-        throw new Error(`OpenRouter embedding error ${res.status}: ${errText}`)
+        const duration = (performance.now() - t0).toFixed(0)
+        const embedding = response.data[0]?.embedding
+
+        if (!Array.isArray(embedding)) {
+            throw new Error('Expected numeric embedding array from OpenRouter')
+        }
+
+        log.debug({ module: 'llm:embed', model, duration: `${duration}ms`, dimensions: embedding.length }, 'Embedding response')
+
+        return embedding
+    } catch (err) {
+        const duration = (performance.now() - t0).toFixed(0)
+        log.error({ module: 'llm:embed', model, duration: `${duration}ms`, error: String(err) }, 'Embedding error')
+        throw err
     }
-
-    const data = (await res.json()) as Record<string, unknown>
-    const rawData = data.data as Record<string, unknown>[]
-
-    if (!rawData?.[0]) {
-        throw new Error(`Unexpected embedding response: ${JSON.stringify(data).slice(0, 500)}`)
-    }
-
-    const embedding = (rawData[0].embedding ?? rawData[0].values) as number[] | undefined
-    if (!embedding) {
-        throw new Error(`No embedding in response: ${JSON.stringify(rawData[0]).slice(0, 500)}`)
-    }
-
-    log.debug({ module: 'llm:embed', model: env.EMBED_MODEL, duration: `${duration}ms`, dimensions: embedding.length }, 'Embedding response')
-
-    return embedding
 }
 
 export async function embedBatch(texts: string[]): Promise<number[][]> {

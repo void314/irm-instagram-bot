@@ -110,7 +110,7 @@ export async function describeImage(imageUrl: string, pageAccessToken: string): 
         },
         {
             type: 'image_url',
-            image_url: {
+            imageUrl: {
                 url: `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`
             }
         }
@@ -118,7 +118,7 @@ export async function describeImage(imageUrl: string, pageAccessToken: string): 
 
     const result = await chat([{ role: 'user', content }], {
         model: env.VISION_MODEL,
-        max_tokens: 512,
+        maxTokens: 512,
         temperature: 0.3
     })
 

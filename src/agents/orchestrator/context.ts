@@ -1,21 +1,10 @@
 import { getBranchesList } from '../../constants/branches'
-import { type ChatMessage, chat } from '../../services/llm/openrouter'
-import { log } from '../../services/logger'
-import { type PatientInfo, getPatient, updatePatient } from '../../services/rag/patient'
+import { type PatientInfo, formatPatientContext } from '../../services/rag/patient'
 import { AIGERIM_CORE } from '../../services/rag/persona'
-import { executeTool, getToolDefinitions } from '../../services/tools'
-import type { AgentResult } from '../types'
+import type { PipelineState } from '../types'
 
-// Маркер завершённой записи в тестовом режиме — по нему детектируем факт
-// успешной записи и проставляем hasBookedConsultation. Держим в отдельной
-// константе, чтобы промпт и детектор гарантированно ссылались на одну строку.
+// Маркер завершённой записи в тестовом режиме
 const COMPLETION_MARKER = '(Тестовый режим)'
-
-const LANG_LABEL: Record<'ru' | 'kk' | 'en', string> = {
-    ru: 'русском',
-    kk: 'казахском',
-    en: 'английском'
-}
 
 function formatToday(): string {
     const now = new Date()
@@ -31,7 +20,7 @@ function describeKnownField(label: string, value: string | null | undefined): st
     return value ? `${label}: ${value} (уже известно, повторно не спрашивай)` : `${label}: неизвестно — нужно спросить`
 }
 
-function buildKnownPatientBlock(patient: PatientInfo | null, lang: 'ru' | 'kk' | 'en'): string {
+function buildKnownPatientBlock(patient: PatientInfo | null): string {
     if (!patient) return 'О пациенте пока ничего не известно.'
 
     const citizenshipLabel = patient.citizenship === 'kz' ? 'РК' : patient.citizenship === 'foreign' ? 'иностранный гражданин' : null
@@ -40,12 +29,17 @@ function buildKnownPatientBlock(patient: PatientInfo | null, lang: 'ru' | 'kk' |
         describeKnownField('ФИО (как обращаться)', patient.name),
         describeKnownField('Телефон', patient.phone),
         describeKnownField('Филиал', patient.preferredBranch),
-        describeKnownField('Гражданство', citizenshipLabel),
-        describeKnownField('Язык общения', patient.preferredLang || LANG_LABEL[lang])
+        describeKnownField('Гражданство', citizenshipLabel)
     ].join('\n')
 }
 
-function buildSystemPrompt(patient: PatientInfo | null, lang: 'ru' | 'kk' | 'en'): string {
+export function buildBookingContext(patient: PatientInfo | null, lang: 'ru' | 'kk' | 'en'): string {
+    const langLabel: Record<'ru' | 'kk' | 'en', string> = {
+        ru: 'русском',
+        kk: 'казахском',
+        en: 'английском'
+    }
+
     return (
         AIGERIM_CORE +
         '\n\n' +
@@ -58,7 +52,7 @@ function buildSystemPrompt(patient: PatientInfo | null, lang: 'ru' | 'kk' | 'en'
 бери оба значения строго из расписания, полученного через get_doctor_schedule, не додумывай их.
 
 === ЧТО УЖЕ ИЗВЕСТНО О ПАЦИЕНТЕ ===
-${buildKnownPatientBlock(patient, lang)}
+${buildKnownPatientBlock(patient)}
 
 === ПОСЛЕДОВАТЕЛЬНОСТЬ СБОРА ДАННЫХ ===
 Спрашивай по ОДНОМУ недостающему пункту за раз, в естественной беседе (не списком вопросов разом):
@@ -114,49 +108,30 @@ ${COMPLETION_MARKER}
   ОБЯЗАТЕЛЬНО спроси пациента, на какое конкретное время он хочет записаться, и предупреди,
   что некоторые окна могут быть уже заняты.
 
-ВАЖНО: Весь ответ пациенту формируй строго на языке: ${LANG_LABEL[lang]}.`
+ВАЖНО: Весь ответ пациенту формируй строго на языке: ${langLabel[lang]}.`
     )
 }
 
-export async function handleBookingIntent(query: string, senderId: string, history: ChatMessage[], lang: 'ru' | 'kk' | 'en' = 'ru'): Promise<AgentResult> {
-    log.info({ module: 'booking' }, 'Handling booking intent')
+export function buildObjectionContext(query: string, patientStr: string): string {
+    return (
+        AIGERIM_CORE +
+        '\n\n' +
+        `=== РЕЖИМ ОБРАБОТКИ ВОЗРАЖЕНИЙ ===
+Пользователь выразил возражение: "${query}"
 
-    const patient = await getPatient(senderId)
-    const tools = getToolDefinitions()
+Задача:
+1. Понять суть возражения
+2. Применить соответствующий скрипт обработки возражений
+3. Убедить пользователя в преимуществах услуги
+4. Предложить решение
 
-    const systemPrompt = buildSystemPrompt(patient, lang)
+Контекст пациента:
+${patientStr}
 
-    const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }]
-    if (history.length > 0) {
-        messages.push(...history)
-    }
-    messages.push({ role: 'user', content: query })
+Используй инструменты get_prices, get_doctor_schedule для подтверждения преимуществ.
+Отвечай естественно, в рамках диалога, не используя шаблонных фраз.
 
-    const first = await chat(messages, { tools, tool_choice: 'auto' })
-
-    let finalAnswer = first.content
-
-    if (first.toolCalls && first.toolCalls.length > 0) {
-        messages.push({ role: 'assistant', content: first.content || '', tool_calls: first.toolCalls })
-
-        for (const tc of first.toolCalls) {
-            try {
-                const toolResult = await executeTool(tc.function.name, JSON.parse(tc.function.arguments), patient)
-                messages.push({ role: 'tool', content: toolResult.answer, tool_call_id: tc.id })
-            } catch (err) {
-                messages.push({ role: 'tool', content: `Ошибка: ${String(err)}`, tool_call_id: tc.id })
-            }
-        }
-
-        const second = await chat(messages)
-        finalAnswer = second.content || finalAnswer
-    }
-
-    if (finalAnswer && finalAnswer.includes(COMPLETION_MARKER)) {
-        await updatePatient(senderId, { hasBookedConsultation: true })
-        log.info({ module: 'booking', senderId }, 'Booking completed in emulation mode')
-    }
-
-    const answer = finalAnswer || 'Произошла ошибка при записи. Попробуйте еще раз.'
-    return { content: answer, confidence: 'high', gaps: [] }
+ВАЖНО: Итоговый ответ пользователю сформируй на том же языке, что и пользователь.
+`
+    )
 }

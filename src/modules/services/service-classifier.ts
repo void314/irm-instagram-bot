@@ -68,8 +68,8 @@ async function classifyBatch(names: string[]): Promise<Map<string, ServiceCatego
             {
                 model: env.INTENT_MODEL,
                 temperature: 0,
-                max_tokens: 4000,
-                response_format: { type: 'json_object' }
+                maxTokens: 4000,
+                responseFormat: { type: 'json_object' }
             }
         )
 

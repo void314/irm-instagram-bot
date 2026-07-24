@@ -2,9 +2,12 @@ import { env } from '../../config/constants'
 import { getBranchesList } from '../../constants/branches'
 import { type ChatMessage, chat } from '../../services/llm/openrouter'
 import { log } from '../../services/logger'
+import { updateConversationMetadata } from '../../services/rag/context'
 import { type PatientInfo, updatePatient } from '../../services/rag/patient'
 import { executeTool } from '../../services/tools'
 import type { AgentResult } from '../types'
+
+type PendingToolClarification = 'branch' | 'citizenship'
 
 // Эти функции возвращают НЕ готовый текст вопроса пользователю, а терсе data-заметку
 // для главного агента (оркестратора). Сам вопрос формулирует оркестратор — он видит
@@ -27,9 +30,27 @@ const CITIZENSHIP_EXTRACTION_PROMPT = `Ты — классификатор гр�
 
 Ответь строго в формате JSON: {"citizenship": "kz" | "foreign" | "unknown"}`
 
+function extractJsonObject(raw: string): string {
+    const trimmed = raw.trim()
+    if (!trimmed) return ''
+
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+    if (fenced) return fenced[1].trim()
+
+    const firstBrace = trimmed.indexOf('{')
+    const lastBrace = trimmed.lastIndexOf('}')
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        return trimmed.slice(firstBrace, lastBrace + 1)
+    }
+
+    return trimmed
+}
+
 async function extractCitizenshipFromQuery(query: string): Promise<'kz' | 'foreign' | null> {
+    let answer: { content: string }
+
     try {
-        const result = await chat(
+        answer = await chat(
             [
                 { role: 'system', content: CITIZENSHIP_EXTRACTION_PROMPT },
                 { role: 'user', content: query }
@@ -37,17 +58,37 @@ async function extractCitizenshipFromQuery(query: string): Promise<'kz' | 'forei
             {
                 model: env.TOOL_MODEL,
                 temperature: 0,
-                max_tokens: 30,
-                response_format: { type: 'json_object' }
+                maxTokens: 50,
+                responseFormat: { type: 'json_object' }
             }
         )
+    } catch {
+        try {
+            answer = await chat(
+                [
+                    { role: 'system', content: CITIZENSHIP_EXTRACTION_PROMPT },
+                    { role: 'user', content: query }
+                ],
+                { model: env.TOOL_MODEL, temperature: 0, maxTokens: 50 }
+            )
+        } catch (e) {
+            log.warn({ module: 'agent:tool', error: String(e) }, 'Citizenship extraction failed')
+            return null
+        }
+    }
 
-        const parsed = JSON.parse(result.content)
+    if (!answer.content || !answer.content.trim()) return null
+
+    try {
+        const jsonStr = extractJsonObject(answer.content)
+        if (!jsonStr) return null
+
+        const parsed = JSON.parse(jsonStr) as Record<string, unknown>
         const citizenship = parsed.citizenship
 
         if (citizenship === 'kz' || citizenship === 'foreign') {
             log.info({ module: 'agent:tool', citizenship, source: 'llm_extraction' }, 'Citizenship extracted from user response')
-            return citizenship
+            return citizenship as 'kz' | 'foreign'
         }
 
         return null
@@ -55,6 +96,11 @@ async function extractCitizenshipFromQuery(query: string): Promise<'kz' | 'forei
         log.warn({ module: 'agent:tool', error: String(e) }, 'Citizenship extraction failed')
         return null
     }
+}
+
+async function updatePendingToolClarifications(conversationId: bigint, pending: PendingToolClarification[]): Promise<void> {
+    if (conversationId <= 0) return
+    await updateConversationMetadata(conversationId, { pendingToolClarifications: pending })
 }
 
 export async function handlePriceIntent(
@@ -102,6 +148,8 @@ export async function handlePriceIntent(
     if (!effectiveCitizenship) missing.push('citizenship')
 
     if (missing.length > 0) {
+        await updatePendingToolClarifications(conversationId, missing)
+
         const notes: string[] = []
         if (missing.includes('branch')) notes.push(buildBranchDataNote())
         if (missing.includes('citizenship')) notes.push(buildCitizenshipDataNote())
@@ -120,6 +168,7 @@ export async function handlePriceIntent(
 
     try {
         const result = await executeTool('get_prices', toolArgs, updatedPatient)
+        await updatePendingToolClarifications(conversationId, [])
         log.info({ module: 'agent:tool', hasPatient: !!updatedPatient }, 'Price intent: tool direct')
 
         if (result.found) {
@@ -144,6 +193,7 @@ export async function handlePriceIntent(
             updatedPatient: updatedPatient as unknown as Record<string, unknown> | undefined
         }
     } catch (err) {
+        await updatePendingToolClarifications(conversationId, [])
         log.error({ module: 'agent:tool', error: String(err) }, 'Price intent tool error')
         let answer = ''
         switch (lang) {

@@ -71,7 +71,7 @@ export async function getConversationContext(conversationId: bigint): Promise<Fo
 export function getLastBotMessage(history: ChatMessage[]): string | null {
     if (!history || history.length === 0) return null
     const lines = history.find((m) => m.role === 'assistant')
-    if (lines) return lines?.content || ''
+    if (lines) return typeof lines.content === 'string' ? lines.content : ''
     return null
 }
 
@@ -80,7 +80,14 @@ export async function updateConversationMetadata(
     updates: Record<string, unknown>,
     currentMetadata?: Record<string, unknown> | null
 ): Promise<void> {
-    const meta = currentMetadata ? { ...currentMetadata } : {}
+    const persistedMetadata =
+        currentMetadata ??
+        (await db
+            .select({ metadata: conversations.metadata })
+            .from(conversations)
+            .where(eq(conversations.id, conversationId))
+            .then((rows) => rows[0]?.metadata ?? null))
+    const meta = persistedMetadata ? { ...persistedMetadata } : {}
     Object.assign(meta, updates)
 
     await db.update(conversations).set({ metadata: meta, updatedAt: new Date() }).where(eq(conversations.id, conversationId))

@@ -108,7 +108,7 @@ async function formatCategorySummaryWithLLM(rows: CategoryRow[], lang: 'ru' | 'k
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: JSON.stringify(payload) }
             ],
-            { model: env.INTENT_MODEL, temperature: 0.4, max_tokens: 400 }
+            { model: env.INTENT_MODEL, temperature: 0.4, maxTokens: 400 }
         )
         return result.content.trim()
     } catch (err) {

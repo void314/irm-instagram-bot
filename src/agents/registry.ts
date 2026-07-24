@@ -12,16 +12,6 @@ const AGENTS: AgentDescriptor[] = [
         fillsGaps: ['service_composition', 'general_knowledge', 'doctor_info']
     },
     {
-        name: 'booking',
-        description: 'Запись на приём',
-        fillsGaps: ['booking_data']
-    },
-    {
-        name: 'objection',
-        description: 'Отработка возражений',
-        fillsGaps: []
-    },
-    {
         name: 'conversation',
         description: 'Приветствия, прощания, благодарности',
         fillsGaps: []

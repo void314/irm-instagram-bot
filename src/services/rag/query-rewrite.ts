@@ -96,8 +96,8 @@ export async function resolveSearchQueries(query: string, history: ChatMessage[]
                 {
                     model: QUERY_ANALYZER_MODEL,
                     temperature: 0,
-                    max_tokens: 220,
-                    response_format: { type: 'json_object' }
+                    maxTokens: 220,
+                    responseFormat: { type: 'json_object' }
                 }
             )
         } catch {
@@ -106,7 +106,7 @@ export async function resolveSearchQueries(query: string, history: ChatMessage[]
                     { role: 'system', content: SEARCH_QUERY_ANALYZER_PROMPT },
                     { role: 'user', content: payload }
                 ],
-                { model: QUERY_ANALYZER_MODEL, temperature: 0, max_tokens: 260 }
+                { model: QUERY_ANALYZER_MODEL, temperature: 0, maxTokens: 260 }
             )
         }
 

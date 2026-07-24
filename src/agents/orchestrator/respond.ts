@@ -82,7 +82,7 @@ export async function craftResponse(
         const result = await chat([{ role: 'system', content: systemPrompt }, ...(history || []), { role: 'user', content: query }], {
             model: env.SYNTHESIS_MODEL,
             temperature: 0.3,
-            max_tokens: 800
+            maxTokens: 800
         })
         return result.content.trim()
     } catch {

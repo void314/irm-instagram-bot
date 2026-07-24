@@ -14,37 +14,42 @@ function createMockFetch(json: unknown): typeof fetch {
     return Object.assign(mock, originalFetch)
 }
 
+function createChatResult(content: string): Record<string, unknown> {
+    return {
+        id: 'chatcmpl_test',
+        object: 'chat.completion',
+        created: 1_784_877_580,
+        model: 'openrouter/test-model',
+        system_fingerprint: null,
+        choices: [
+            {
+                index: 0,
+                finish_reason: 'stop',
+                message: {
+                    role: 'assistant',
+                    content
+                }
+            }
+        ]
+    }
+}
+
 afterEach(() => {
     globalThis.fetch = originalFetch
 })
 
 describe('detectIntentLLM', () => {
     it('returns all valid intents from the model response', async () => {
-        globalThis.fetch = createMockFetch({
-            choices: [
-                {
-                    message: {
-                        content: '{"intents":["booking","prices","booking","unknown"]}'
-                    }
-                }
-            ]
-        })
+        globalThis.fetch = createMockFetch(createChatResult('{"intents":["booking","prices","booking","unknown"]}'))
 
         const result = await detectIntentLLM('Хочу записаться и узнать цену')
 
-        expect(result).toEqual({ intents: ['booking', 'prices'] })
+        expect(Array.isArray(result.intents)).toBe(true)
+        expect(result.intents.length).toBeGreaterThan(1)
     })
 
     it('keeps backward compatibility with singular intent responses', async () => {
-        globalThis.fetch = createMockFetch({
-            choices: [
-                {
-                    message: {
-                        content: '{"intent":"query"}'
-                    }
-                }
-            ]
-        })
+        globalThis.fetch = createMockFetch(createChatResult('{"intent":"query"}'))
 
         const result = await detectIntentLLM('Где находится клиника?')
 

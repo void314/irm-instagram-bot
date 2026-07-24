@@ -175,8 +175,8 @@ export async function extractPatientInfoFromDialogue(
                 {
                     model: env.INTENT_MODEL,
                     temperature: 0,
-                    max_tokens: 200,
-                    response_format: { type: 'json_object' }
+                    maxTokens: 200,
+                    responseFormat: { type: 'json_object' }
                 }
             )
         } catch {
@@ -185,7 +185,7 @@ export async function extractPatientInfoFromDialogue(
                     { role: 'system', content: EXTRACTION_PROMPT },
                     { role: 'user', content: payload }
                 ],
-                { model: env.INTENT_MODEL, temperature: 0, max_tokens: 200 }
+                { model: env.INTENT_MODEL, temperature: 0, maxTokens: 200 }
             )
         }
 
