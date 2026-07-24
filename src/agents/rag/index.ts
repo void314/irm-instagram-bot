@@ -49,6 +49,7 @@ export async function processRagQuery(query: string, history: ChatMessage[], deb
     )
 
     if (searchResults.length === 0) {
+        log.warn({ contextStr: '', passed: 'low' })
         return { content: '', confidence: 'low', gaps: [] }
     }
 
@@ -61,6 +62,8 @@ export async function processRagQuery(query: string, history: ChatMessage[], deb
     debug.groundingPassed = passed
 
     const contextStr = searchResults.map((r) => `[релевантность: ${(r.score * 100).toFixed(0)}%]\n${r.text}`).join('\n\n---\n\n')
+
+    log.warn({ contextStr, passed })
 
     return {
         content: contextStr,

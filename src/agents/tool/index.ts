@@ -77,6 +77,8 @@ async function extractCitizenshipFromQuery(query: string): Promise<'kz' | 'forei
         }
     }
 
+    log.warn({ module: 'agent:tool', answer: answer.content })
+
     if (!answer.content || !answer.content.trim()) return null
 
     try {

@@ -1,5 +1,6 @@
 import { env } from '../../config/constants'
 import { type ChatMessage, chat } from '../../services/llm/openrouter'
+import { log } from '../../services/logger'
 import { IRM_BASE } from '../../services/rag/prompts'
 
 function formatToday(): string {
@@ -77,6 +78,9 @@ export async function craftResponse(
         '',
         ...factFragments.map((c, i) => `[Факты ${i + 1}]:\n${c}`)
     ].join('\n')
+
+    log.warn({ query, factFragments, lang, patientStr, history, patientName, shouldSuggestBooking, shouldNudgeBooking, askForName, suggestedName })
+    log.warn({ systemPrompt })
 
     try {
         const result = await chat([{ role: 'system', content: systemPrompt }, ...(history || []), { role: 'user', content: query }], {

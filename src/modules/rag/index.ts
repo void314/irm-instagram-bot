@@ -1,10 +1,9 @@
-import Elysia, { status } from 'elysia'
+import Elysia, { status, t } from 'elysia'
 
-import { eq, sql } from 'drizzle-orm'
+import { desc, eq, ilike, or, sql } from 'drizzle-orm'
 
 import * as models from './model'
 import { type RagContext, runPipeline } from '../../agents/orchestrator'
-import { env } from '../../config/constants'
 import { db } from '../../db/client'
 import { chunks, conversations, documents } from '../../db/schema'
 import { embedBatch } from '../../services/llm/openrouter'
@@ -106,41 +105,59 @@ export const ragController = new Elysia({
     )
     .get(
         '/documents',
-        async () => {
-            const rows = await db.execute<{
-                id: string
-                title: string
-                source: string
-                chunk_count: string
-                created_at: string
-            }>(
-                sql`
-                    SELECT
-                        d.id,
-                        d.title,
-                        d.source,
-                        (SELECT COUNT(*) FROM ${chunks} c WHERE c.document_id = d.id) AS chunk_count,
-                        d.created_at
-                    FROM ${documents} d
-                    ORDER BY d.created_at DESC
-                `
-            )
+        async ({ query: { q } }) => {
+            const searchQuery = q?.trim()
+            const searchPattern = searchQuery ? `%${searchQuery}%` : undefined
+            const filterCondition = searchPattern
+                ? or(
+                      ilike(documents.title, searchPattern),
+                      sql<boolean>`
+                          EXISTS (
+                              SELECT 1
+                              FROM ${chunks} search_chunks
+                              WHERE search_chunks.document_id = ${documents.id}
+                                AND search_chunks.text ILIKE ${searchPattern}
+                          )
+                      `
+                  )
+                : sql`TRUE`
+
+            const rows = await db
+                .select({
+                    id: documents.id,
+                    title: documents.title,
+                    source: documents.source,
+                    chunkCount: sql<number>`
+                        (
+                            SELECT COUNT(*)
+                            FROM ${chunks} counted_chunks
+                            WHERE counted_chunks.document_id = ${documents.id}
+                        )
+                    `,
+                    createdAt: documents.createdAt
+                })
+                .from(documents)
+                .where(filterCondition)
+                .orderBy(desc(documents.createdAt))
 
             return rows.map((r) => ({
-                id: r.id,
+                id: r.id.toString(),
                 title: r.title,
                 source: r.source,
-                chunkCount: Number.parseInt(r.chunk_count),
-                createdAt: r.created_at
+                chunkCount: Number(r.chunkCount),
+                createdAt: r.createdAt.toISOString()
             }))
         },
         {
+            query: t.Object({
+                q: t.Optional(t.String())
+            }),
             response: {
                 200: 'documentsListResponse200'
             },
             detail: {
                 summary: 'List documents',
-                description: 'Returns all documents with chunk counts'
+                description: 'Returns documents with chunk counts and optional search by title or content'
             }
         }
     )

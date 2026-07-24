@@ -6,6 +6,7 @@ import { runPipeline } from '../../agents/orchestrator'
 import { env } from '../../config/constants'
 import { db } from '../../db/client'
 import { conversations, messages, patients, services } from '../../db/schema'
+import { ensurePatient } from '../../services/rag/patient'
 import { findDoctor } from '../../services/tools/doctor-search'
 import { pricesTool } from '../../services/tools/prices'
 import { scheduleTool } from '../../services/tools/schedule'
@@ -345,6 +346,9 @@ adminController
                     text: body.question
                 })
 
+                // Ensure patient record exists before pipeline
+                await ensurePatient(body.senderId)
+
                 // Run pipeline with the real conversationId
                 const ctx = { conversationId: convId, senderId: body.senderId }
                 const result = await runPipeline(body.question, ctx, true)
@@ -448,6 +452,9 @@ adminController
                 .insert(conversations)
                 .values({ senderId: body.senderId, businessId: env.INSTAGRAM_BUSINESS_ID ?? 'simulator' })
                 .returning()
+
+            await ensurePatient(body.senderId)
+
             return { conversationId: String(conv.id), senderId: conv.senderId }
         },
         {

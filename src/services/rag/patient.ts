@@ -92,9 +92,12 @@ export async function updatePatient(senderId: string, data: Partial<Omit<Patient
         )
     }
     await db
-        .update(patients)
-        .set({ ...data, updatedAt: new Date() })
-        .where(eq(patients.senderId, senderId))
+        .insert(patients)
+        .values({ senderId, ...data, updatedAt: new Date() })
+        .onConflictDoUpdate({
+            target: patients.senderId,
+            set: { ...data, updatedAt: new Date() }
+        })
         .execute()
 }
 

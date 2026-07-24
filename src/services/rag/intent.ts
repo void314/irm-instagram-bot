@@ -93,7 +93,7 @@ Allowed intents:
 - query: any other informational question
 
 Rules (most important):
-- If the last bot message is a question and the user gives a short direct answer, classify by the topic of that question (booking vs prices), NOT as query.
+- If the last bot message is a question and the user gives a short direct answer, classify by the topic of that question (booking vs prices) and mark it as query.
 - If the last bot message offered booking and the user replies with short agreement ("ok", "yes", "да", "хорошо") => booking.
 - If the last bot message offered booking and the user replies with short refusal ("no", "нет", "не хочу", "спасибо не надо") => booking.
 - Return multiple intents only when the same message clearly contains multiple independent intents.
